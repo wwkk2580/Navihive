@@ -68,8 +68,12 @@ wrangler tail
 ### Backend Architecture
 - **Runtime**: Cloudflare Workers (serverless)
 - **Database**: Cloudflare D1 (SQLite)
-- **Authentication**: JWT-based auth using @cfworker/jwt
+- **Authentication**:
+  - JWT tokens signed with Web Crypto API (HMAC-SHA256)
+  - Password hashing with bcrypt (10 salt rounds)
+  - HttpOnly cookie storage for tokens
 - **Entry Point**: `worker/index.ts` handles all API routes
+- **Security**: Request validation, size limits, CORS, error handling
 
 ### Key Design Patterns
 
@@ -231,11 +235,67 @@ pnpm format
 
 ## Security Notes
 
-1. **Input Validation**: All user inputs validated in worker/index.ts before database operations
-2. **SQL Injection**: Protected via D1 prepared statements (never string concatenation)
-3. **XSS**: React escapes outputs by default; be cautious with dangerouslySetInnerHTML
-4. **Authentication**: JWT tokens expire; AUTH_SECRET should be cryptographically random in production
-5. **CORS**: Not configured; same-origin only (appropriate for Workers with Assets)
+### Implemented Security Measures
+
+1. **Authentication & Authorization**
+   - JWT-based authentication using Web Crypto API (HMAC-SHA256)
+   - Password hashing with bcrypt (10 salt rounds)
+   - HttpOnly cookies for token storage (prevents XSS token theft)
+   - Configurable token expiry: 7 days (standard) or 30 days ("remember me")
+   - Cookie fallback to Authorization header for backward compatibility
+
+2. **Input Validation**
+   - Request body size limit: 1MB (prevents memory exhaustion)
+   - Deep validation for all import data (structure, types, URL formats)
+   - Field whitelisting in update operations
+   - Type validation for all user inputs
+   - All inputs validated before database operations
+
+3. **SQL Injection Protection**
+   - All database queries use D1 prepared statements
+   - Parameterized queries with `.bind()` - never string concatenation
+   - Field whitelisting prevents unauthorized column updates
+
+4. **XSS Protection**
+   - React escapes all outputs by default
+   - Custom CSS sanitization removes dangerous patterns:
+     - `javascript:`, `data:text/html`, `vbscript:` protocols
+     - `@import`, `expression()`, `-moz-binding`
+     - Event handlers and inline scripts
+   - URL validation with protocol whitelist (https:, data:image/)
+
+5. **SSRF Protection**
+   - URL validation blocks private IP ranges:
+     - Localhost (127.0.0.1, ::1)
+     - Private IPv4 (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
+     - Link-local (169.254.0.0/16, fe80::/10)
+   - Only HTTPS and data:image/ URLs allowed
+
+6. **CORS Configuration**
+   - Whitelist-based origin validation
+   - Automatic same-origin allowance
+   - Supports workers.dev subdomains in development
+   - Credentials enabled for cookie-based auth
+
+7. **Error Handling**
+   - Structured logging with unique error IDs
+   - User-friendly error messages (no stack traces to client)
+   - Detailed server-side logging for debugging
+   - Request context (path, method) included in error logs
+
+8. **TypeScript Strict Mode**
+   - Comprehensive type checking enabled
+   - No implicit any, strict null checks
+   - No unchecked indexed access
+   - Prevents type-related runtime errors
+
+### Security Best Practices
+
+- **AUTH_SECRET**: Use cryptographically random value (32+ characters)
+- **Password Hashing**: Always use `pnpm hash-password` - never store plaintext
+- **HTTPS Only**: Enforce HTTPS in production (automatic on Cloudflare Workers)
+- **Token Storage**: Tokens stored in HttpOnly cookies (primary) and localStorage (fallback)
+- **Content Security**: Custom CSS limited to 50KB, sanitized before injection
 
 ## Deployment Workflow
 
@@ -245,6 +305,29 @@ pnpm format
 4. Deploy with `pnpm deploy` (runs build automatically)
 5. Cloudflare Workers deploys globally within seconds
 6. Database migrations must be run manually via Cloudflare dashboard
+
+## Recent Security Improvements
+
+### Phase 1: Critical Security Fixes (Completed)
+- ✅ **CR-001**: JWT signing implementation using Web Crypto API
+- ✅ **CR-003**: XSS protection with CSS sanitization
+- ✅ **CR-004**: SSRF protection with URL validation
+- ✅ **CR-002**: SQL injection prevention with parameterized queries
+
+### Phase 2: High Priority Fixes (Completed)
+- ✅ **HS-001**: HttpOnly cookies for secure token storage
+- ✅ **HS-003**: bcrypt password hashing
+- ✅ **HS-004**: CORS configuration with origin validation
+- ✅ **HS-005**: Structured error handling with unique error IDs
+- ⏭️ **HS-002**: Rate limiting (skipped - requires KV namespace setup)
+
+### Phase 3: Medium Priority Fixes (Completed)
+- ✅ **MS-001**: TypeScript strict mode enabled (65+ type errors fixed)
+- ✅ **MS-005**: Request body size limits (1MB max)
+- ✅ **MS-007**: Deep data validation for import operations
+
+### Total Security Commits: 10
+All security fixes have been committed to git with detailed commit messages and are ready for deployment.
 
 ## Troubleshooting
 
