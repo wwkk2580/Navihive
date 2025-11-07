@@ -37,6 +37,7 @@ export interface Group {
   id?: number;
   name: string;
   order_num: number;
+  is_public?: number; // 0 = 私密（仅管理员可见），1 = 公开（访客可见）
   created_at?: string;
   updated_at?: string;
 }
@@ -50,6 +51,7 @@ export interface Site {
   description: string;
   notes: string;
   order_num: number;
+  is_public?: number; // 0 = 私密（仅管理员可见），1 = 公开（访客可见）
   created_at?: string;
   updated_at?: string;
 }

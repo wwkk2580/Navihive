@@ -366,6 +366,8 @@ export default {
                 }
 
                 // 验证中间件 - 条件认证
+                let isAuthenticated = false; // 记录认证状态
+
                 if (api.isAuthEnabled()) {
                     const requestPath = `/api/${path}`;
 
@@ -419,6 +421,8 @@ export default {
                         if (!verifyResult.valid) {
                             return createResponse("认证已过期或无效，请重新登录", request, { status: 401 });
                         }
+
+                        isAuthenticated = true; // 认证成功
                     } else {
                         // 跳过认证
                         log({
@@ -426,13 +430,24 @@ export default {
                             level: 'info',
                             message: `允许免认证访问: ${method} ${requestPath}`,
                         });
+                        isAuthenticated = false; // 未认证（访客模式）
                     }
                 }
 
                 // 路由匹配
                 if (path === "groups" && method === "GET") {
-                    const groups = await api.getGroups();
-                    return createJsonResponse(groups, request);
+                    // 根据认证状态过滤查询
+                    let query = 'SELECT * FROM groups';
+
+                    if (!isAuthenticated) {
+                        // 未认证用户只能看到公开分组
+                        query += ' WHERE is_public = 1';
+                    }
+
+                    query += ' ORDER BY order_num ASC';
+
+                    const result = await env.DB.prepare(query).all();
+                    return createJsonResponse(result.results || [], request);
                 } else if (path.startsWith("groups/") && method === "GET") {
                     const idStr = path.split("/")[1];
                     if (!idStr) {
@@ -516,9 +531,35 @@ export default {
                 }
                 // 站点相关API
                 else if (path === "sites" && method === "GET") {
+                    // 根据认证状态过滤查询
+                    let query = `
+                        SELECT s.*
+                        FROM sites s
+                        INNER JOIN groups g ON s.group_id = g.id
+                    `;
+
                     const groupId = url.searchParams.get("groupId");
-                    const sites = await api.getSites(groupId ? parseInt(groupId) : undefined);
-                    return createJsonResponse(sites, request);
+                    const conditions: string[] = [];
+
+                    // 添加 groupId 过滤条件
+                    if (groupId) {
+                        conditions.push(`s.group_id = ${parseInt(groupId)}`);
+                    }
+
+                    // 未认证用户只能看到公开分组下的公开网站
+                    if (!isAuthenticated) {
+                        conditions.push('g.is_public = 1');
+                        conditions.push('s.is_public = 1');
+                    }
+
+                    if (conditions.length > 0) {
+                        query += ' WHERE ' + conditions.join(' AND ');
+                    }
+
+                    query += ' ORDER BY s.group_id ASC, s.order_num ASC';
+
+                    const result = await env.DB.prepare(query).all();
+                    return createJsonResponse(result.results || [], request);
                 } else if (path.startsWith("sites/") && method === "GET") {
                     const idStr = path.split("/")[1];
                     if (!idStr) {
