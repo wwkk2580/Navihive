@@ -6,6 +6,7 @@ import { GroupWithSites } from './types';
 import ThemeToggle from './components/ThemeToggle';
 import GroupCard from './components/GroupCard';
 import LoginForm from './components/LoginForm';
+import { sanitizeCSS, isSecureUrl, extractDomain } from './utils/url';
 import './App.css';
 import {
   DndContext,
@@ -80,25 +81,6 @@ enum SortMode {
   None, // 不排序
   GroupSort, // 分组排序
   SiteSort, // 站点排序
-}
-
-// 辅助函数：提取域名
-function extractDomain(url: string): string | null {
-  if (!url) return null;
-
-  try {
-    // 尝试自动添加协议头，如果缺少的话
-    let fullUrl = url;
-    if (!/^https?:\/\//i.test(url)) {
-      fullUrl = 'http://' + url;
-    }
-    const parsedUrl = new URL(fullUrl);
-    return parsedUrl.hostname;
-  } catch {
-    // 尝试备用方法
-    const match = url.match(/^(?:https?:\/\/)?(?:[^@\n]+@)?(?:www\.)?([^:/\n?]+)/im);
-    return match && match[1] ? match[1] : url;
-  }
 }
 
 // 默认配置
@@ -349,30 +331,18 @@ function App() {
       document.head.appendChild(styleElement);
     }
 
-    // 添加安全过滤，防止CSS注入攻击
-    const sanitizedCss = sanitizeCSS(customCss || '');
-    styleElement.textContent = sanitizedCss;
+    // 使用安全的 CSS 清理函数，防止XSS攻击
+    const sanitized = sanitizeCSS(customCss || '');
+    styleElement.textContent = sanitized;
+
+    // 清理函数：组件卸载时移除样式
+    return () => {
+      const el = document.getElementById('custom-style');
+      if (el) {
+        el.remove();
+      }
+    };
   }, [configs]);
-
-  // CSS安全过滤函数
-  const sanitizeCSS = (css: string): string => {
-    if (!css) return '';
-
-    // 移除可能导致XSS的内容
-    return (
-      css
-        // 移除包含javascript:的URL
-        .replace(/url\s*\(\s*(['"]?)javascript:/gi, 'url($1invalid:')
-        // 移除expression
-        .replace(/expression\s*\(/gi, 'invalid(')
-        // 移除import
-        .replace(/@import/gi, '/* @import */')
-        // 移除behavior
-        .replace(/behavior\s*:/gi, '/* behavior: */')
-        // 过滤content属性中的不安全内容
-        .replace(/content\s*:\s*(['"]?).*?url\s*\(\s*(['"]?)javascript:/gi, 'content: $1')
-    );
-  };
 
   // 同步HTML的class以保持与现有CSS兼容
   useEffect(() => {
@@ -938,7 +908,7 @@ function App() {
         }}
       >
         {/* 背景图片 */}
-        {configs['site.backgroundImage'] && (
+        {configs['site.backgroundImage'] && isSecureUrl(configs['site.backgroundImage']) && (
           <>
             <Box
               sx={{
