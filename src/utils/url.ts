@@ -120,7 +120,7 @@ export function sanitizeCSS(css: string): string {
   });
 
   // 3. 清理 url() 中的危险内容
-  sanitized = sanitized.replace(/url\s*\(\s*(['"]?)(.*?)\1\s*\)/gi, (match, quote, url) => {
+  sanitized = sanitized.replace(/url\s*\(\s*(['"]?)(.*?)\1\s*\)/gi, (_match, quote, url) => {
     // 移除空格
     const trimmedUrl = url.trim();
 

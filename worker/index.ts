@@ -85,7 +85,7 @@ function getCorsHeaders(request: Request): Record<string, string> {
     const requestUrl = new URL(request.url);
 
     // 如果是同源请求，允许
-    let allowedOrigin = origin;
+    let allowedOrigin: string | null = origin;
 
     if (origin) {
         // 检查是否在允许列表中，或者是 workers.dev 子域名
@@ -93,7 +93,7 @@ function getCorsHeaders(request: Request): Record<string, string> {
             origin.endsWith('.workers.dev') ||
             origin === requestUrl.origin; // 同源
 
-        allowedOrigin = isAllowed ? origin : ALLOWED_ORIGINS[0];
+        allowedOrigin = isAllowed ? origin : (ALLOWED_ORIGINS[0] || null);
     }
 
     return {
@@ -115,11 +115,11 @@ function createJsonResponse(
 ): Response {
     const corsHeaders = getCorsHeaders(request);
 
-    return createJsonResponse(data, {
+    return Response.json(data, {
         ...options,
         headers: {
             ...corsHeaders,
-            ...options.headers,
+            ...(options.headers as Record<string, string>),
         },
     });
 }
@@ -134,11 +134,11 @@ function createResponse(
 ): Response {
     const corsHeaders = getCorsHeaders(request);
 
-    return createResponse(body, {
+    return new Response(body, {
         ...options,
         headers: {
             ...corsHeaders,
-            ...options.headers,
+            ...(options.headers as Record<string, string>),
         },
     });
 }
@@ -149,7 +149,7 @@ export default {
 
         // 处理 CORS 预检请求
         if (request.method === 'OPTIONS') {
-            return createResponse(null, {
+            return new Response(null, {
                 status: 204,
                 headers: getCorsHeaders(request),
             });
@@ -245,11 +245,13 @@ export default {
                     if (cookieHeader) {
                         const cookies = cookieHeader.split(';').reduce((acc, cookie) => {
                             const [key, value] = cookie.trim().split('=');
-                            acc[key] = value;
+                            if (key) {
+                                acc[key] = value || '';
+                            }
                             return acc;
                         }, {} as Record<string, string>);
 
-                        token = cookies['auth_token'];
+                        token = cookies['auth_token'] || null;
                     }
 
                     // 如果 Cookie 中没有，尝试从 Authorization 头读取（向后兼容）
@@ -285,9 +287,13 @@ export default {
                     const groups = await api.getGroups();
                     return createJsonResponse(groups, request);
                 } else if (path.startsWith("groups/") && method === "GET") {
-                    const id = parseInt(path.split("/")[1]);
+                    const idStr = path.split("/")[1];
+                    if (!idStr) {
+                        return createJsonResponse({ error: "无效的ID" }, request, { status: 400 });
+                    }
+                    const id = parseInt(idStr);
                     if (isNaN(id)) {
-                        return createJsonResponse({ error: "无效的ID" }, { status: 400 });
+                        return createJsonResponse({ error: "无效的ID" }, request, { status: 400 });
                     }
                     const group = await api.getGroup(id);
                     return createJsonResponse(group, request);
@@ -302,6 +308,7 @@ export default {
                                 success: false,
                                 message: `验证失败: ${validation.errors?.join(", ")}`,
                             },
+                            request,
                             { status: 400 }
                         );
                     }
@@ -309,9 +316,13 @@ export default {
                     const result = await api.createGroup(validation.sanitizedData as Group);
                     return createJsonResponse(result, request);
                 } else if (path.startsWith("groups/") && method === "PUT") {
-                    const id = parseInt(path.split("/")[1]);
+                    const idStr = path.split("/")[1];
+                    if (!idStr) {
+                        return createJsonResponse({ error: "无效的ID" }, request, { status: 400 });
+                    }
+                    const id = parseInt(idStr);
                     if (isNaN(id)) {
-                        return createJsonResponse({ error: "无效的ID" }, { status: 400 });
+                        return createJsonResponse({ error: "无效的ID" }, request, { status: 400 });
                     }
 
                     const data = (await request.json()) as Partial<Group>;
@@ -325,6 +336,7 @@ export default {
                                 success: false,
                                 message: "分组名称不能为空且必须是字符串",
                             },
+                            request,
                             { status: 400 }
                         );
                     }
@@ -335,6 +347,7 @@ export default {
                                 success: false,
                                 message: "排序号必须是数字",
                             },
+                            request,
                             { status: 400 }
                         );
                     }
@@ -342,9 +355,13 @@ export default {
                     const result = await api.updateGroup(id, data);
                     return createJsonResponse(result, request);
                 } else if (path.startsWith("groups/") && method === "DELETE") {
-                    const id = parseInt(path.split("/")[1]);
+                    const idStr = path.split("/")[1];
+                    if (!idStr) {
+                        return createJsonResponse({ error: "无效的ID" }, request, { status: 400 });
+                    }
+                    const id = parseInt(idStr);
                     if (isNaN(id)) {
-                        return createJsonResponse({ error: "无效的ID" }, { status: 400 });
+                        return createJsonResponse({ error: "无效的ID" }, request, { status: 400 });
                     }
 
                     const result = await api.deleteGroup(id);
@@ -356,9 +373,13 @@ export default {
                     const sites = await api.getSites(groupId ? parseInt(groupId) : undefined);
                     return createJsonResponse(sites, request);
                 } else if (path.startsWith("sites/") && method === "GET") {
-                    const id = parseInt(path.split("/")[1]);
+                    const idStr = path.split("/")[1];
+                    if (!idStr) {
+                        return createJsonResponse({ error: "无效的ID" }, request, { status: 400 });
+                    }
+                    const id = parseInt(idStr);
                     if (isNaN(id)) {
-                        return createJsonResponse({ error: "无效的ID" }, { status: 400 });
+                        return createJsonResponse({ error: "无效的ID" }, request, { status: 400 });
                     }
 
                     const site = await api.getSite(id);
@@ -374,6 +395,7 @@ export default {
                                 success: false,
                                 message: `验证失败: ${validation.errors?.join(", ")}`,
                             },
+                            request,
                             { status: 400 }
                         );
                     }
@@ -381,9 +403,13 @@ export default {
                     const result = await api.createSite(validation.sanitizedData as Site);
                     return createJsonResponse(result, request);
                 } else if (path.startsWith("sites/") && method === "PUT") {
-                    const id = parseInt(path.split("/")[1]);
+                    const idStr = path.split("/")[1];
+                    if (!idStr) {
+                        return createJsonResponse({ error: "无效的ID" }, request, { status: 400 });
+                    }
+                    const id = parseInt(idStr);
                     if (isNaN(id)) {
-                        return createJsonResponse({ error: "无效的ID" }, { status: 400 });
+                        return createJsonResponse({ error: "无效的ID" }, request, { status: 400 });
                     }
 
                     const data = (await request.json()) as Partial<Site>;
@@ -398,6 +424,7 @@ export default {
                                     success: false,
                                     message: "无效的URL格式",
                                 },
+                                request,
                                 { status: 400 }
                             );
                         }
@@ -412,6 +439,7 @@ export default {
                                     success: false,
                                     message: "无效的图标URL格式",
                                 },
+                                request,
                                 { status: 400 }
                             );
                         }
@@ -420,9 +448,13 @@ export default {
                     const result = await api.updateSite(id, data);
                     return createJsonResponse(result, request);
                 } else if (path.startsWith("sites/") && method === "DELETE") {
-                    const id = parseInt(path.split("/")[1]);
+                    const idStr = path.split("/")[1];
+                    if (!idStr) {
+                        return createJsonResponse({ error: "无效的ID" }, request, { status: 400 });
+                    }
+                    const id = parseInt(idStr);
                     if (isNaN(id)) {
-                        return createJsonResponse({ error: "无效的ID" }, { status: 400 });
+                        return createJsonResponse({ error: "无效的ID" }, request, { status: 400 });
                     }
 
                     const result = await api.deleteSite(id);
@@ -439,6 +471,7 @@ export default {
                                 success: false,
                                 message: "排序数据必须是数组",
                             },
+                            request,
                             { status: 400 }
                         );
                     }
@@ -455,6 +488,7 @@ export default {
                                     success: false,
                                     message: "排序数据格式无效，每个项目必须包含id和order_num",
                                 },
+                                request,
                                 { status: 400 }
                             );
                         }
@@ -472,6 +506,7 @@ export default {
                                 success: false,
                                 message: "排序数据必须是数组",
                             },
+                            request,
                             { status: 400 }
                         );
                     }
@@ -488,6 +523,7 @@ export default {
                                     success: false,
                                     message: "排序数据格式无效，每个项目必须包含id和order_num",
                                 },
+                                request,
                                 { status: 400 }
                             );
                         }
@@ -503,7 +539,7 @@ export default {
                 } else if (path.startsWith("configs/") && method === "GET") {
                     const key = path.substring("configs/".length);
                     const value = await api.getConfig(key);
-                    return createJsonResponse({ key, value });
+                    return createJsonResponse({ key, value }, request);
                 } else if (path.startsWith("configs/") && method === "PUT") {
                     const key = path.substring("configs/".length);
                     const data = (await request.json()) as ConfigInput;
@@ -516,6 +552,7 @@ export default {
                                 success: false,
                                 message: `验证失败: ${validation.errors?.join(", ")}`,
                             },
+                            request,
                             { status: 400 }
                         );
                     }
@@ -527,6 +564,7 @@ export default {
                                 success: false,
                                 message: "配置值必须提供，可以为空字符串",
                             },
+                            request,
                             { status: 400 }
                         );
                     }
@@ -542,7 +580,7 @@ export default {
                 // 数据导出路由
                 else if (path === "export" && method === "GET") {
                     const data = await api.exportData();
-                    return createJsonResponse(data, {
+                    return createJsonResponse(data, request, {
                         headers: {
                             "Content-Disposition": "attachment; filename=navhive-data.json",
                             "Content-Type": "application/json",
@@ -568,6 +606,7 @@ export default {
                                 success: false,
                                 message: "导入数据格式无效",
                             },
+                            request,
                             { status: 400 }
                         );
                     }

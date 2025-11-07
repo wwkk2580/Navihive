@@ -696,8 +696,11 @@ function App() {
   // 处理文件选择
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      setImportFile(e.target.files[0]);
-      setImportError(null);
+      const selectedFile = e.target.files[0];
+      if (selectedFile) {
+        setImportFile(selectedFile);
+        setImportError(null);
+      }
     }
   };
 

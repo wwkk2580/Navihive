@@ -212,6 +212,11 @@ export class NavigationAPI {
 
       const [encodedHeader, encodedPayload, signature] = parts;
 
+      // Validate all parts exist
+      if (!encodedHeader || !encodedPayload || !signature) {
+        return { valid: false };
+      }
+
       // 重新生成签名进行验证
       const encoder = new TextEncoder();
       const data = encoder.encode(`${encodedHeader}.${encodedPayload}`);
@@ -357,7 +362,11 @@ export class NavigationAPI {
     if (!result.results || result.results.length === 0) {
       throw new Error('创建分组失败');
     }
-    return result.results[0];
+    const createdGroup = result.results[0];
+    if (!createdGroup) {
+      throw new Error('创建分组失败');
+    }
+    return createdGroup;
   }
 
   async updateGroup(id: number, group: Partial<Group>): Promise<Group | null> {
@@ -394,7 +403,8 @@ export class NavigationAPI {
     if (!result.results || result.results.length === 0) {
       return null;
     }
-    return result.results[0];
+    const updatedGroup = result.results[0];
+    return updatedGroup || null;
   }
 
   async deleteGroup(id: number): Promise<boolean> {
@@ -455,7 +465,11 @@ export class NavigationAPI {
     if (!result.results || result.results.length === 0) {
       throw new Error('创建站点失败');
     }
-    return result.results[0];
+    const createdSite = result.results[0];
+    if (!createdSite) {
+      throw new Error('创建站点失败');
+    }
+    return createdSite;
   }
 
   async updateSite(id: number, site: Partial<Site>): Promise<Site | null> {
@@ -500,7 +514,8 @@ export class NavigationAPI {
     if (!result.results || result.results.length === 0) {
       return null;
     }
-    return result.results[0];
+    const updatedSite = result.results[0];
+    return updatedSite || null;
   }
 
   async deleteSite(id: number): Promise<boolean> {

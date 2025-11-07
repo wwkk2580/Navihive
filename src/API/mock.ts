@@ -207,12 +207,16 @@ export class MockNavigationClient {
     const index = mockGroups.findIndex((g) => g.id === id);
     if (index === -1) return null;
 
+    const existing = mockGroups[index];
+    if (!existing) return null;
+
     mockGroups[index] = {
-      ...mockGroups[index],
+      ...existing,
       ...group,
       updated_at: new Date().toISOString(),
     };
-    return mockGroups[index];
+    const updated = mockGroups[index];
+    return updated || null;
   }
 
   async deleteGroup(id: number): Promise<boolean> {
@@ -255,12 +259,16 @@ export class MockNavigationClient {
     const index = mockSites.findIndex((s) => s.id === id);
     if (index === -1) return null;
 
+    const existing = mockSites[index];
+    if (!existing) return null;
+
     mockSites[index] = {
-      ...mockSites[index],
+      ...existing,
       ...site,
       updated_at: new Date().toISOString(),
     };
-    return mockSites[index];
+    const updated = mockSites[index];
+    return updated || null;
   }
 
   async deleteSite(id: number): Promise<boolean> {
@@ -277,7 +285,10 @@ export class MockNavigationClient {
     for (const order of groupOrders) {
       const index = mockGroups.findIndex((g) => g.id === order.id);
       if (index !== -1) {
-        mockGroups[index].order_num = order.order_num;
+        const group = mockGroups[index];
+        if (group) {
+          group.order_num = order.order_num;
+        }
       }
     }
     return true;
@@ -288,7 +299,10 @@ export class MockNavigationClient {
     for (const order of siteOrders) {
       const index = mockSites.findIndex((s) => s.id === order.id);
       if (index !== -1) {
-        mockSites[index].order_num = order.order_num;
+        const site = mockSites[index];
+        if (site) {
+          site.order_num = order.order_num;
+        }
       }
     }
     return true;
@@ -363,8 +377,9 @@ export class MockNavigationClient {
 
         if (existingGroupIndex >= 0) {
           // 已存在同名分组，添加到映射
-          if (importGroup.id) {
-            groupMap.set(importGroup.id, mockGroups[existingGroupIndex].id as number);
+          const existingGroup = mockGroups[existingGroupIndex];
+          if (importGroup.id && existingGroup && existingGroup.id) {
+            groupMap.set(importGroup.id, existingGroup.id);
           }
           stats.groups.merged++;
         } else {
@@ -405,15 +420,18 @@ export class MockNavigationClient {
 
         if (existingSiteIndex >= 0) {
           // 更新现有站点
-          mockSites[existingSiteIndex] = {
-            ...mockSites[existingSiteIndex],
-            name: importSite.name,
-            icon: importSite.icon,
-            description: importSite.description,
-            notes: importSite.notes,
-            updated_at: new Date().toISOString(),
-          };
-          stats.sites.updated++;
+          const existingSite = mockSites[existingSiteIndex];
+          if (existingSite) {
+            mockSites[existingSiteIndex] = {
+              ...existingSite,
+              name: importSite.name,
+              icon: importSite.icon,
+              description: importSite.description,
+              notes: importSite.notes,
+              updated_at: new Date().toISOString(),
+            };
+            stats.sites.updated++;
+          }
         } else {
           // 创建新站点
           const newId = Math.max(0, ...mockSites.map((s) => s.id || 0)) + 1;
