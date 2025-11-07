@@ -112,20 +112,20 @@ export class NavigationClient {
   // 检查身份验证状态
   async checkAuthStatus(): Promise<boolean> {
     try {
-      // 尝试获取配置，如果成功则表示已认证
-      await this.getConfigs();
-      return true;
-    } catch (error) {
-      console.log('认证检查:', error);
+      // 调用专门的认证状态检查端点
+      const response = await fetch(`${this.baseUrl}/auth/status`, {
+        method: 'GET',
+        credentials: 'include', // 包含 Cookie
+      });
 
-      // 特定处理401错误
-      if (error instanceof Error) {
-        if (error.message.includes('认证') || error.message.includes('API错误: 401')) {
-          return false;
-        }
+      if (!response.ok) {
+        return false;
       }
 
-      // 其他错误，假设已认证
+      const data = await response.json();
+      return data.authenticated === true;
+    } catch (error) {
+      console.log('认证状态检查失败:', error);
       return false;
     }
   }

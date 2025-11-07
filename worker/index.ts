@@ -79,9 +79,6 @@ class SimpleRateLimiter {
 // 创建登录端点速率限制器: 5次尝试/15分钟
 const loginRateLimiter = new SimpleRateLimiter(5, 15);
 
-// 定期清理 (每小时)
-setInterval(() => loginRateLimiter.cleanup(), 60 * 60 * 1000);
-
 
 /**
  * 只读路由白名单 - 这些路由在 AUTH_REQUIRED_FOR_READ=false 时无需认证
@@ -90,6 +87,7 @@ const READ_ONLY_ROUTES = [
     { method: 'GET', path: '/api/groups' },
     { method: 'GET', path: '/api/sites' },
     { method: 'GET', path: '/api/configs' },
+    { method: 'GET', path: '/api/groups-with-sites' },
 ] as const;
 
 /**
@@ -462,6 +460,47 @@ export default {
                     );
                 }
 
+                // 认证状态检查端点 - 检查当前用户是否已认证
+                if (path === "auth/status" && method === "GET") {
+                    // 检查 Cookie 中的 token
+                    const cookieHeader = request.headers.get("Cookie");
+                    let token: string | null = null;
+
+                    if (cookieHeader) {
+                        const cookies = cookieHeader.split(';').reduce((acc, cookie) => {
+                            const [key, value] = cookie.trim().split('=');
+                            if (key && value) {
+                                acc[key] = value;
+                            }
+                            return acc;
+                        }, {} as Record<string, string>);
+
+                        token = cookies['auth_token'] || null;
+                    }
+
+                    // 验证 token
+                    if (token && api.isAuthEnabled()) {
+                        try {
+                            const result = await api.verifyToken(token);
+                            return createJsonResponse(
+                                { authenticated: result.valid },
+                                request
+                            );
+                        } catch {
+                            return createJsonResponse(
+                                { authenticated: false },
+                                request
+                            );
+                        }
+                    }
+
+                    // 没有 token 或认证未启用
+                    return createJsonResponse(
+                        { authenticated: false },
+                        request
+                    );
+                }
+
                 // 初始化数据库接口 - 不需要验证
                 if (path === "init" && method === "GET") {
                     const initResult = await api.initDB();
@@ -482,61 +521,75 @@ export default {
                         (route) => route.method === method && route.path === requestPath
                     );
 
-                    const shouldSkipAuth = isReadOnlyRoute && env.AUTH_REQUIRED_FOR_READ !== 'true';
+                    const shouldRequireAuth = !isReadOnlyRoute || env.AUTH_REQUIRED_FOR_READ === 'true';
 
-                    if (!shouldSkipAuth) {
-                        // 需要认证：优先从 Cookie 中读取 token
-                        const cookieHeader = request.headers.get("Cookie");
-                        let token: string | null = null;
+                    // 总是检查 token（如果存在）
+                    const cookieHeader = request.headers.get("Cookie");
+                    let token: string | null = null;
 
-                        if (cookieHeader) {
-                            const cookies = cookieHeader.split(';').reduce((acc, cookie) => {
-                                const [key, value] = cookie.trim().split('=');
-                                if (key) {
-                                    acc[key] = value || '';
-                                }
-                                return acc;
-                            }, {} as Record<string, string>);
+                    if (cookieHeader) {
+                        const cookies = cookieHeader.split(';').reduce((acc, cookie) => {
+                            const [key, value] = cookie.trim().split('=');
+                            if (key) {
+                                acc[key] = value || '';
+                            }
+                            return acc;
+                        }, {} as Record<string, string>);
 
-                            token = cookies['auth_token'] || null;
-                        }
+                        token = cookies['auth_token'] || null;
+                    }
 
-                        // 如果 Cookie 中没有，尝试从 Authorization 头读取（向后兼容）
-                        if (!token) {
-                            const authHeader = request.headers.get("Authorization");
-                            if (authHeader) {
-                                const [authType, headerToken] = authHeader.split(" ");
-                                if (authType === "Bearer" && headerToken) {
-                                    token = headerToken;
-                                }
+                    // 如果 Cookie 中没有，尝试从 Authorization 头读取（向后兼容）
+                    if (!token) {
+                        const authHeader = request.headers.get("Authorization");
+                        if (authHeader) {
+                            const [authType, headerToken] = authHeader.split(" ");
+                            if (authType === "Bearer" && headerToken) {
+                                token = headerToken;
                             }
                         }
+                    }
 
-                        // 如果没有 token，返回401错误
-                        if (!token) {
-                            return createResponse("请先登录", request, {
-                                status: 401,
-                                headers: {
-                                    "WWW-Authenticate": "Bearer",
-                                },
+                    // 如果有 token，验证它
+                    if (token) {
+                        try {
+                            const verifyResult = await api.verifyToken(token);
+                            if (verifyResult.valid) {
+                                isAuthenticated = true; // 认证成功
+                                log({
+                                    timestamp: new Date().toISOString(),
+                                    level: 'info',
+                                    message: `已认证用户访问: ${method} ${requestPath}`,
+                                });
+                            }
+                        } catch (error) {
+                            // Token 验证失败，保持 isAuthenticated = false
+                            log({
+                                timestamp: new Date().toISOString(),
+                                level: 'warn',
+                                message: `Token 验证失败: ${method} ${requestPath}`,
+                                details: error,
                             });
                         }
+                    }
 
-                        // 验证Token有效性
-                        const verifyResult = await api.verifyToken(token);
-                        if (!verifyResult.valid) {
-                            return createResponse("认证已过期或无效，请重新登录", request, { status: 401 });
-                        }
+                    // 如果需要强制认证但未认证，返回 401
+                    if (shouldRequireAuth && !isAuthenticated) {
+                        return createResponse("请先登录", request, {
+                            status: 401,
+                            headers: {
+                                "WWW-Authenticate": "Bearer",
+                            },
+                        });
+                    }
 
-                        isAuthenticated = true; // 认证成功
-                    } else {
-                        // 跳过认证
+                    // 记录访客访问（只读路由且未认证）
+                    if (isReadOnlyRoute && !isAuthenticated) {
                         log({
                             timestamp: new Date().toISOString(),
                             level: 'info',
-                            message: `允许免认证访问: ${method} ${requestPath}`,
+                            message: `访客模式访问: ${method} ${requestPath}`,
                         });
-                        isAuthenticated = false; // 未认证（访客模式）
                     }
                 }
 
