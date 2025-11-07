@@ -53,6 +53,8 @@ import {
   Snackbar,
   InputAdornment,
   Slider,
+  FormControlLabel,
+  Switch,
 } from '@mui/material';
 import SortIcon from '@mui/icons-material/Sort';
 import SaveIcon from '@mui/icons-material/Save';
@@ -133,6 +135,10 @@ function App() {
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loginLoading, setLoginLoading] = useState(false);
 
+  // 访问模式状态 (readonly: 访客模式, edit: 编辑模式)
+  type ViewMode = 'readonly' | 'edit';
+  const [viewMode, setViewMode] = useState<ViewMode>('readonly');
+
   // 配置状态
   const [configs, setConfigs] = useState<Record<string, string>>(DEFAULT_CONFIGS);
   const [openConfig, setOpenConfig] = useState(false);
@@ -160,7 +166,11 @@ function App() {
   // 新增状态管理
   const [openAddGroup, setOpenAddGroup] = useState(false);
   const [openAddSite, setOpenAddSite] = useState(false);
-  const [newGroup, setNewGroup] = useState<Partial<Group>>({ name: '', order_num: 0 });
+  const [newGroup, setNewGroup] = useState<Partial<Group>>({
+    name: '',
+    order_num: 0,
+    is_public: 1, // 默认为公开
+  });
   const [newSite, setNewSite] = useState<Partial<Site>>({
     name: '',
     url: '',
@@ -169,6 +179,7 @@ function App() {
     notes: '',
     order_num: 0,
     group_id: 0,
+    is_public: 1, // 默认为公开
   });
 
   // 新增菜单状态
@@ -203,13 +214,13 @@ function App() {
       setIsAuthChecking(true);
       console.log('开始检查认证状态...');
 
-      // 尝试进行API调用，检查是否需要认证
+      // 尝试进行API调用,检查是否需要认证
       const result = await api.checkAuthStatus();
       console.log('认证检查结果:', result);
 
       if (!result) {
-        // 未认证，需要登录
-        console.log('未认证，设置需要登录状态');
+        // 未认证，设置为访客模式
+        console.log('未认证，设置访客模式');
 
         // 如果有token但无效，清除它
         if (api.isLoggedIn()) {
@@ -217,26 +228,39 @@ function App() {
           api.logout();
         }
 
-        // 直接更新状态，确保先设置认证状态再结束检查
+        // 设置为访客模式（可以查看公开内容）
         setIsAuthenticated(false);
-        setIsAuthRequired(true);
+        setIsAuthRequired(false); // 允许访客访问
+        setViewMode('readonly');
+
+        // 加载公开数据
+        await fetchData();
+        await fetchConfigs();
       } else {
-        // 直接更新认证状态
+        // 已认证，设置为编辑模式
         setIsAuthenticated(true);
         setIsAuthRequired(false);
+        setViewMode('edit');
 
-        // 如果已经登录或不需要认证，继续加载数据
+        // 加载所有数据（包括私密内容）
         console.log('已认证，开始加载数据');
         await fetchData();
         await fetchConfigs();
       }
     } catch (error) {
       console.error('认证检查失败:', error);
-      // 如果返回401，说明需要认证
-      if (error instanceof Error && error.message.includes('认证')) {
-        console.log('检测到认证错误，设置需要登录状态');
-        setIsAuthenticated(false);
-        setIsAuthRequired(true);
+      // 出错时也允许访客访问
+      console.log('认证检查出错，设置访客模式');
+      setIsAuthenticated(false);
+      setIsAuthRequired(false);
+      setViewMode('readonly');
+
+      // 尝试加载公开数据
+      try {
+        await fetchData();
+        await fetchConfigs();
+      } catch (e) {
+        console.error('加载公开数据失败:', e);
       }
     } finally {
       console.log('认证检查完成');
@@ -254,10 +278,12 @@ function App() {
       const success = await api.login(username, password, rememberMe);
 
       if (success) {
-        // 登录成功
+        // 登录成功，切换到编辑模式
         setIsAuthenticated(true);
         setIsAuthRequired(false);
-        // 加载数据
+        setViewMode('edit');
+
+        // 重新加载数据（包括私密内容）
         await fetchData();
         await fetchConfigs();
       } else {
@@ -278,14 +304,18 @@ function App() {
   const handleLogout = async () => {
     await api.logout();
     setIsAuthenticated(false);
-    setIsAuthRequired(true);
+    setIsAuthRequired(false); // 允许继续以访客身份访问
+    setViewMode('readonly'); // 切换到只读模式
 
-    // 清空数据
-    setGroups([]);
+    // 重新加载数据（仅公开内容）
+    await fetchData();
+    await fetchConfigs();
+
     handleMenuClose();
 
     // 显示提示信息
-    setError('已退出登录，请重新登录');
+    setSnackbarMessage('已退出登录，当前为访客模式');
+    setSnackbarOpen(true);
   };
 
   // 加载配置
@@ -521,7 +551,7 @@ function App() {
 
   // 新增分组相关函数
   const handleOpenAddGroup = () => {
-    setNewGroup({ name: '', order_num: groups.length });
+    setNewGroup({ name: '', order_num: groups.length, is_public: 1 }); // 默认公开
     setOpenAddGroup(true);
   };
 
@@ -568,6 +598,7 @@ function App() {
       notes: '',
       group_id: groupId,
       order_num: maxOrderNum,
+      is_public: 1, // 默认为公开
     });
 
     setOpenAddSite(true);
@@ -1018,82 +1049,101 @@ function App() {
                 </>
               ) : (
                 <>
-                  <Button
-                    variant='contained'
-                    color='primary'
-                    startIcon={<AddIcon />}
-                    onClick={handleOpenAddGroup}
-                    size='small'
-                    sx={{
-                      minWidth: 'auto',
-                      fontSize: { xs: '0.75rem', sm: '0.875rem' },
-                    }}
-                  >
-                    新增分组
-                  </Button>
+                  {viewMode === 'readonly' ? (
+                    // 访客模式：显示登录按钮
+                    <Button
+                      variant='contained'
+                      color='primary'
+                      onClick={() => setIsAuthRequired(true)}
+                      size='small'
+                      sx={{
+                        minWidth: 'auto',
+                        fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                      }}
+                    >
+                      管理员登录
+                    </Button>
+                  ) : (
+                    // 编辑模式：显示管理按钮
+                    <>
+                      <Button
+                        variant='contained'
+                        color='primary'
+                        startIcon={<AddIcon />}
+                        onClick={handleOpenAddGroup}
+                        size='small'
+                        sx={{
+                          minWidth: 'auto',
+                          fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                        }}
+                      >
+                        新增分组
+                      </Button>
 
-                  <Button
-                    variant='outlined'
-                    color='primary'
-                    startIcon={<MenuIcon />}
-                    onClick={handleMenuOpen}
-                    aria-controls={openMenu ? 'navigation-menu' : undefined}
-                    aria-haspopup='true'
-                    aria-expanded={openMenu ? 'true' : undefined}
-                    size='small'
-                    sx={{
-                      minWidth: 'auto',
-                      fontSize: { xs: '0.75rem', sm: '0.875rem' },
-                    }}
-                  >
-                    更多选项
-                  </Button>
-                  <Menu
-                    id='navigation-menu'
-                    anchorEl={menuAnchorEl}
-                    open={openMenu}
-                    onClose={handleMenuClose}
-                    MenuListProps={{
-                      'aria-labelledby': 'navigation-button',
-                    }}
-                  >
-                    <MenuItem onClick={startGroupSort}>
-                      <ListItemIcon>
-                        <SortIcon fontSize='small' />
-                      </ListItemIcon>
-                      <ListItemText>编辑排序</ListItemText>
-                    </MenuItem>
-                    <MenuItem onClick={handleOpenConfig}>
-                      <ListItemIcon>
-                        <SettingsIcon fontSize='small' />
-                      </ListItemIcon>
-                      <ListItemText>网站设置</ListItemText>
-                    </MenuItem>
-                    <Divider />
-                    <MenuItem onClick={handleExportData}>
-                      <ListItemIcon>
-                        <FileDownloadIcon fontSize='small' />
-                      </ListItemIcon>
-                      <ListItemText>导出数据</ListItemText>
-                    </MenuItem>
-                    <MenuItem onClick={handleOpenImport}>
-                      <ListItemIcon>
-                        <FileUploadIcon fontSize='small' />
-                      </ListItemIcon>
-                      <ListItemText>导入数据</ListItemText>
-                    </MenuItem>
-                    {isAuthenticated && (
-                      <>
-                        <Divider />
-                        <MenuItem onClick={handleLogout} sx={{ color: 'error.main' }}>
-                          <ListItemIcon sx={{ color: 'error.main' }}>
-                            <LogoutIcon fontSize='small' />
+                      <Button
+                        variant='outlined'
+                        color='primary'
+                        startIcon={<MenuIcon />}
+                        onClick={handleMenuOpen}
+                        aria-controls={openMenu ? 'navigation-menu' : undefined}
+                        aria-haspopup='true'
+                        aria-expanded={openMenu ? 'true' : undefined}
+                        size='small'
+                        sx={{
+                          minWidth: 'auto',
+                          fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                        }}
+                      >
+                        更多选项
+                      </Button>
+                      <Menu
+                        id='navigation-menu'
+                        anchorEl={menuAnchorEl}
+                        open={openMenu}
+                        onClose={handleMenuClose}
+                        MenuListProps={{
+                          'aria-labelledby': 'navigation-button',
+                        }}
+                      >
+                        <MenuItem onClick={startGroupSort}>
+                          <ListItemIcon>
+                            <SortIcon fontSize='small' />
                           </ListItemIcon>
-                          <ListItemText>退出登录</ListItemText>
+                          <ListItemText>编辑排序</ListItemText>
                         </MenuItem>
-                      </>
-                    )}
-                  </Menu>
+                        <MenuItem onClick={handleOpenConfig}>
+                          <ListItemIcon>
+                            <SettingsIcon fontSize='small' />
+                          </ListItemIcon>
+                          <ListItemText>网站设置</ListItemText>
+                        </MenuItem>
+                        <Divider />
+                        <MenuItem onClick={handleExportData}>
+                          <ListItemIcon>
+                            <FileDownloadIcon fontSize='small' />
+                          </ListItemIcon>
+                          <ListItemText>导出数据</ListItemText>
+                        </MenuItem>
+                        <MenuItem onClick={handleOpenImport}>
+                          <ListItemIcon>
+                            <FileUploadIcon fontSize='small' />
+                          </ListItemIcon>
+                          <ListItemText>导入数据</ListItemText>
+                        </MenuItem>
+                        {isAuthenticated && (
+                          <>
+                            <Divider />
+                            <MenuItem onClick={handleLogout} sx={{ color: 'error.main' }}>
+                              <ListItemIcon sx={{ color: 'error.main' }}>
+                                <LogoutIcon fontSize='small' />
+                              </ListItemIcon>
+                              <ListItemText>退出登录</ListItemText>
+                            </MenuItem>
+                          </>
+                        )}
+                      </Menu>
+                    </>
+                  )}
                 </>
               )}
               <ThemeToggle darkMode={darkMode} onToggle={toggleTheme} />
@@ -1152,6 +1202,7 @@ function App() {
                       group={group}
                       sortMode={sortMode === SortMode.None ? 'None' : 'SiteSort'}
                       currentSortingGroupId={currentSortingGroupId}
+                      viewMode={viewMode}
                       onUpdate={handleSiteUpdate}
                       onDelete={handleSiteDelete}
                       onSaveSiteOrder={handleSaveSiteOrder}
@@ -1209,6 +1260,31 @@ function App() {
                 value={newGroup.name}
                 onChange={handleGroupInputChange}
                 sx={{ mb: 2 }}
+              />
+
+              {/* 公开/私密开关 */}
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={newGroup.is_public !== 0}
+                    onChange={(e) =>
+                      setNewGroup({ ...newGroup, is_public: e.target.checked ? 1 : 0 })
+                    }
+                    color='primary'
+                  />
+                }
+                label={
+                  <Box>
+                    <Typography variant='body1'>
+                      {newGroup.is_public !== 0 ? '公开分组' : '私密分组'}
+                    </Typography>
+                    <Typography variant='caption' color='text.secondary'>
+                      {newGroup.is_public !== 0
+                        ? '所有访客都可以看到此分组'
+                        : '只有管理员登录后才能看到此分组'}
+                    </Typography>
+                  </Box>
+                }
               />
             </DialogContent>
             <DialogActions sx={{ px: 3, pb: 3 }}>
@@ -1351,6 +1427,31 @@ function App() {
                   variant='outlined'
                   value={newSite.notes}
                   onChange={handleSiteInputChange}
+                />
+
+                {/* 公开/私密开关 */}
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={newSite.is_public !== 0}
+                      onChange={(e) =>
+                        setNewSite({ ...newSite, is_public: e.target.checked ? 1 : 0 })
+                      }
+                      color='primary'
+                    />
+                  }
+                  label={
+                    <Box>
+                      <Typography variant='body1'>
+                        {newSite.is_public !== 0 ? '公开站点' : '私密站点'}
+                      </Typography>
+                      <Typography variant='caption' color='text.secondary'>
+                        {newSite.is_public !== 0
+                          ? '所有访客都可以看到此站点'
+                          : '只有管理员登录后才能看到此站点'}
+                      </Typography>
+                    </Box>
+                  }
                 />
               </Stack>
             </DialogContent>

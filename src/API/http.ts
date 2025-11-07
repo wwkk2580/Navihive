@@ -357,9 +357,9 @@ export class NavigationAPI {
   async createGroup(group: Group): Promise<Group> {
     const result = await this.db
       .prepare(
-        'INSERT INTO groups (name, order_num) VALUES (?, ?) RETURNING id, name, order_num, created_at, updated_at'
+        'INSERT INTO groups (name, order_num, is_public) VALUES (?, ?, ?) RETURNING id, name, order_num, is_public, created_at, updated_at'
       )
-      .bind(group.name, group.order_num)
+      .bind(group.name, group.order_num, group.is_public ?? 1)
       .all<Group>();
     if (!result.results || result.results.length === 0) {
       throw new Error('创建分组失败');
@@ -373,7 +373,7 @@ export class NavigationAPI {
 
   async updateGroup(id: number, group: Partial<Group>): Promise<Group | null> {
     // 字段白名单
-    const ALLOWED_FIELDS = ['name', 'order_num'] as const;
+    const ALLOWED_FIELDS = ['name', 'order_num', 'is_public'] as const;
     type AllowedField = (typeof ALLOWED_FIELDS)[number];
 
     const updates: string[] = ['updated_at = CURRENT_TIMESTAMP'];
@@ -448,9 +448,9 @@ export class NavigationAPI {
     const result = await this.db
       .prepare(
         `
-      INSERT INTO sites (group_id, name, url, icon, description, notes, order_num) 
-      VALUES (?, ?, ?, ?, ?, ?, ?) 
-      RETURNING id, group_id, name, url, icon, description, notes, order_num, created_at, updated_at
+      INSERT INTO sites (group_id, name, url, icon, description, notes, order_num, is_public)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      RETURNING id, group_id, name, url, icon, description, notes, order_num, is_public, created_at, updated_at
     `
       )
       .bind(
@@ -460,7 +460,8 @@ export class NavigationAPI {
         site.icon || '',
         site.description || '',
         site.notes || '',
-        site.order_num
+        site.order_num,
+        site.is_public ?? 1
       )
       .all<Site>();
 
@@ -484,6 +485,7 @@ export class NavigationAPI {
       'description',
       'notes',
       'order_num',
+      'is_public',
     ] as const;
     type AllowedField = (typeof ALLOWED_FIELDS)[number];
 

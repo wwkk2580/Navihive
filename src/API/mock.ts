@@ -6,6 +6,7 @@ const mockGroups: Group[] = [
     id: 1,
     name: '常用工具',
     order_num: 1,
+    is_public: 1, // 公开分组
     created_at: '2024-01-01T00:00:00Z',
     updated_at: '2024-01-01T00:00:00Z',
   },
@@ -13,13 +14,15 @@ const mockGroups: Group[] = [
     id: 2,
     name: '开发资源',
     order_num: 2,
+    is_public: 1, // 公开分组
     created_at: '2024-01-01T20:00:00Z',
     updated_at: '2024-01-01T30:00:00Z',
   },
   {
     id: 3,
-    name: '开发资源3',
+    name: '私密分组',
     order_num: 3,
+    is_public: 0, // 私密分组（仅管理员可见）
     created_at: '2024-01-01T40:00:00Z',
     updated_at: '2024-01-01T50:00:00Z',
   },
@@ -35,6 +38,7 @@ const mockSites: Site[] = [
     description: '搜索引擎',
     notes: '',
     order_num: 1,
+    is_public: 1, // 公开站点
     created_at: '2024-01-01T00:00:00Z',
     updated_at: '2024-01-01T00:00:00Z',
   },
@@ -47,54 +51,46 @@ const mockSites: Site[] = [
     description: '代码托管平台',
     notes: '',
     order_num: 2,
+    is_public: 1, // 公开站点
     created_at: '2024-01-01T00:00:00Z',
     updated_at: '2024-01-01T00:00:00Z',
   },
   {
     id: 3,
     group_id: 1,
-    name: 'Google',
-    url: 'https://www.google.com',
+    name: '私密书签',
+    url: 'https://private.example.com',
     icon: 'https://img.zhengmi.org/file/1742480539412_微信图片_20240707011628.jpg',
-    description: '搜索引擎',
+    description: '私密站点（仅管理员可见）',
     notes: '',
-    order_num: 1,
+    order_num: 3,
+    is_public: 0, // 私密站点
     created_at: '2024-01-01T00:00:00Z',
     updated_at: '2024-01-01T00:00:00Z',
   },
   {
     id: 4,
-    group_id: 1,
-    name: 'GitHub',
-    url: 'https://github.com',
+    group_id: 2,
+    name: 'Stack Overflow',
+    url: 'https://stackoverflow.com',
     icon: 'github.png',
-    description: '代码托管平台',
+    description: '技术问答社区',
     notes: '',
-    order_num: 2,
+    order_num: 1,
+    is_public: 1, // 公开站点
     created_at: '2024-01-01T00:00:00Z',
     updated_at: '2024-01-01T00:00:00Z',
   },
   {
     id: 5,
-    group_id: 1,
-    name: 'GitHub',
-    url: 'https://github.com',
+    group_id: 3,
+    name: '内部工具',
+    url: 'https://internal.example.com',
     icon: 'github.png',
-    description: '代码托管平台',
+    description: '公司内部工具',
     notes: '',
-    order_num: 2,
-    created_at: '2024-01-01T00:00:00Z',
-    updated_at: '2024-01-01T00:00:00Z',
-  },
-  {
-    id: 6,
-    group_id: 1,
-    name: 'GitHub',
-    url: 'https://github.com',
-    icon: 'github.png',
-    description: '代码托管平台6',
-    notes: '',
-    order_num: 2,
+    order_num: 1,
+    is_public: 1, // 公开站点（但属于私密分组）
     created_at: '2024-01-01T00:00:00Z',
     updated_at: '2024-01-01T00:00:00Z',
   },
@@ -110,11 +106,13 @@ const mockConfigs: Record<string, string> = {
 // 模拟API实现
 export class MockNavigationClient {
   private token: string | null = null;
+  public isAuthenticated: boolean = false; // 公开认证状态
 
   constructor() {
     // 从本地存储加载令牌
     if (typeof localStorage !== 'undefined') {
       this.token = localStorage.getItem('auth_token');
+      this.isAuthenticated = !!this.token;
     }
   }
 
@@ -126,6 +124,7 @@ export class MockNavigationClient {
   // 设置认证令牌
   setToken(token: string): void {
     this.token = token;
+    this.isAuthenticated = true;
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem('auth_token', token);
     }
@@ -134,6 +133,7 @@ export class MockNavigationClient {
   // 清除认证令牌
   clearToken(): void {
     this.token = null;
+    this.isAuthenticated = false;
     if (typeof localStorage !== 'undefined') {
       localStorage.removeItem('auth_token');
     }
@@ -182,6 +182,11 @@ export class MockNavigationClient {
   async getGroups(): Promise<Group[]> {
     // 模拟网络延迟
     await new Promise((resolve) => setTimeout(resolve, 200));
+
+    // 根据认证状态过滤分组
+    if (!this.isAuthenticated) {
+      return mockGroups.filter(g => g.is_public === 1);
+    }
     return [...mockGroups];
   }
 
@@ -230,10 +235,27 @@ export class MockNavigationClient {
 
   async getSites(groupId?: number): Promise<Site[]> {
     await new Promise((resolve) => setTimeout(resolve, 200));
-    if (groupId) {
-      return mockSites.filter((site) => site.group_id === groupId);
+
+    let sites = [...mockSites];
+
+    // 根据认证状态过滤站点
+    if (!this.isAuthenticated) {
+      // 访客只能看到公开分组下的公开站点
+      const publicGroupIds = mockGroups
+        .filter(g => g.is_public === 1)
+        .map(g => g.id);
+
+      sites = sites.filter(site =>
+        site.is_public === 1 && publicGroupIds.includes(site.group_id)
+      );
     }
-    return [...mockSites];
+
+    // 按分组过滤
+    if (groupId) {
+      return sites.filter((site) => site.group_id === groupId);
+    }
+
+    return sites;
   }
 
   // 实现其他方法，与NavigationClient保持一致的接口...

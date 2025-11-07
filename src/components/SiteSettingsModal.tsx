@@ -24,6 +24,8 @@ import {
   SelectChangeEvent,
   InputAdornment,
   Alert,
+  FormControlLabel,
+  Switch,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -58,6 +60,7 @@ export default function SiteSettingsModal({
     description: site.description || '',
     notes: site.notes || '',
     group_id: String(site.group_id),
+    is_public: site.is_public ?? 1, // 默认为公开
   });
 
   // 用于预览图标
@@ -355,6 +358,34 @@ export default function SiteSettingsModal({
               placeholder='可选的私人备注'
               variant='outlined'
               size='small'
+            />
+
+            {/* 公开/私密开关 */}
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={formData.is_public !== 0}
+                  onChange={(e) =>
+                    setFormData((prev) => ({
+                      ...prev,
+                      is_public: e.target.checked ? 1 : 0,
+                    }))
+                  }
+                  color='primary'
+                />
+              }
+              label={
+                <Box>
+                  <Typography variant='body1'>
+                    {formData.is_public !== 0 ? '公开站点' : '私密站点'}
+                  </Typography>
+                  <Typography variant='caption' color='text.secondary'>
+                    {formData.is_public !== 0
+                      ? '所有访客都可以看到此站点'
+                      : '只有管理员登录后才能看到此站点'}
+                  </Typography>
+                </Box>
+              }
             />
           </Stack>
         </DialogContent>

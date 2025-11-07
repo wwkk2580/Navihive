@@ -43,6 +43,7 @@ interface GroupCardProps {
   index?: number; // 用于Draggable的索引，仅在分组排序模式下需要
   sortMode: 'None' | 'GroupSort' | 'SiteSort';
   currentSortingGroupId: number | null;
+  viewMode?: 'readonly' | 'edit'; // 访问模式
   onUpdate: (updatedSite: Site) => void;
   onDelete: (siteId: number) => void;
   onSaveSiteOrder: (groupId: number, sites: Site[]) => void;
@@ -57,6 +58,7 @@ const GroupCard: React.FC<GroupCardProps> = ({
   group,
   sortMode,
   currentSortingGroupId,
+  viewMode = 'edit', // 默认为编辑模式
   onUpdate,
   onDelete,
   onSaveSiteOrder,
@@ -202,6 +204,7 @@ const GroupCard: React.FC<GroupCardProps> = ({
                       onUpdate={onUpdate}
                       onDelete={onDelete}
                       isEditMode={true}
+                      viewMode={viewMode}
                       index={idx}
                       iconApi={configs?.['site.iconApi']} // 传入iconApi配置
                     />
@@ -243,6 +246,7 @@ const GroupCard: React.FC<GroupCardProps> = ({
               onUpdate={onUpdate}
               onDelete={onDelete}
               isEditMode={false}
+              viewMode={viewMode}
               iconApi={configs?.['site.iconApi']} // 传入iconApi配置
             />
           </Box>
@@ -365,7 +369,7 @@ const GroupCard: React.FC<GroupCardProps> = ({
               保存顺序
             </Button>
           ) : (
-            sortMode === 'None' && (
+            sortMode === 'None' && viewMode === 'edit' && ( // 只在编辑模式显示按钮
               <>
                 {onAddSite && (
                   <Button
