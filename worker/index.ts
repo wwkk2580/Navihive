@@ -438,15 +438,17 @@ export default {
                 if (path === "groups" && method === "GET") {
                     // 根据认证状态过滤查询
                     let query = 'SELECT * FROM groups';
+                    const params: number[] = [];
 
                     if (!isAuthenticated) {
                         // 未认证用户只能看到公开分组
-                        query += ' WHERE is_public = 1';
+                        query += ' WHERE is_public = ?';
+                        params.push(1);
                     }
 
                     query += ' ORDER BY order_num ASC';
 
-                    const result = await env.DB.prepare(query).all();
+                    const result = await env.DB.prepare(query).bind(...params).all();
                     return createJsonResponse(result.results || [], request);
                 } else if (path.startsWith("groups/") && method === "GET") {
                     const idStr = path.split("/")[1];
@@ -540,16 +542,20 @@ export default {
 
                     const groupId = url.searchParams.get("groupId");
                     const conditions: string[] = [];
+                    const params: (string | number)[] = [];
 
                     // 添加 groupId 过滤条件
                     if (groupId) {
-                        conditions.push(`s.group_id = ${parseInt(groupId)}`);
+                        conditions.push(`s.group_id = ?`);
+                        params.push(parseInt(groupId));
                     }
 
                     // 未认证用户只能看到公开分组下的公开网站
                     if (!isAuthenticated) {
-                        conditions.push('g.is_public = 1');
-                        conditions.push('s.is_public = 1');
+                        conditions.push('g.is_public = ?');
+                        params.push(1);
+                        conditions.push('s.is_public = ?');
+                        params.push(1);
                     }
 
                     if (conditions.length > 0) {
@@ -558,7 +564,7 @@ export default {
 
                     query += ' ORDER BY s.group_id ASC, s.order_num ASC';
 
-                    const result = await env.DB.prepare(query).all();
+                    const result = await env.DB.prepare(query).bind(...params).all();
                     return createJsonResponse(result.results || [], request);
                 } else if (path.startsWith("sites/") && method === "GET") {
                     const idStr = path.split("/")[1];
