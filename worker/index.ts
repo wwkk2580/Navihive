@@ -70,6 +70,34 @@ function createErrorResponse(
     );
 }
 
+// 请求体大小限制配置
+const MAX_BODY_SIZE = 1024 * 1024; // 1MB
+
+/**
+ * 验证请求体大小并解析 JSON
+ */
+async function validateRequestBody(request: Request): Promise<unknown> {
+    const contentLength = request.headers.get('Content-Length');
+
+    // 检查 Content-Length 头
+    if (contentLength && parseInt(contentLength, 10) > MAX_BODY_SIZE) {
+        throw new Error('请求体过大，最大允许 1MB');
+    }
+
+    // 读取并验证实际大小
+    const bodyText = await request.text();
+
+    if (bodyText.length > MAX_BODY_SIZE) {
+        throw new Error('请求体过大，最大允许 1MB');
+    }
+
+    try {
+        return JSON.parse(bodyText);
+    } catch {
+        throw new Error('无效的 JSON 格式');
+    }
+}
+
 // CORS 配置
 const ALLOWED_ORIGINS = [
     'http://localhost:5173',
@@ -165,20 +193,21 @@ export default {
 
                 // 登录路由 - 不需要验证
                 if (path === "login" && method === "POST") {
-                    const loginData = (await request.json()) as LoginInput;
+                    try {
+                        const loginData = (await validateRequestBody(request)) as LoginInput;
 
-                    // 验证登录数据
-                    const validation = validateLogin(loginData);
-                    if (!validation.valid) {
-                        return createJsonResponse(
-                            {
-                                success: false,
-                                message: `验证失败: ${validation.errors?.join(", ")}`,
-                            },
-                            request,
-                            { status: 400 }
-                        );
-                    }
+                        // 验证登录数据
+                        const validation = validateLogin(loginData);
+                        if (!validation.valid) {
+                            return createJsonResponse(
+                                {
+                                    success: false,
+                                    message: `验证失败: ${validation.errors?.join(", ")}`,
+                                },
+                                request,
+                                { status: 400 }
+                            );
+                        }
 
                     const result = await api.login(loginData as LoginRequest);
 
@@ -205,6 +234,16 @@ export default {
                     }
 
                     return createJsonResponse(result, request);
+                    } catch (error) {
+                        return createJsonResponse(
+                            {
+                                success: false,
+                                message: error instanceof Error ? error.message : '请求无效',
+                            },
+                            request,
+                            { status: 400 }
+                        );
+                    }
                 }
 
                 // 登出路由
@@ -298,7 +337,7 @@ export default {
                     const group = await api.getGroup(id);
                     return createJsonResponse(group, request);
                 } else if (path === "groups" && method === "POST") {
-                    const data = (await request.json()) as GroupInput;
+                    const data = (await validateRequestBody(request)) as GroupInput;
 
                     // 验证分组数据
                     const validation = validateGroup(data);
@@ -325,7 +364,7 @@ export default {
                         return createJsonResponse({ error: "无效的ID" }, request, { status: 400 });
                     }
 
-                    const data = (await request.json()) as Partial<Group>;
+                    const data = (await validateRequestBody(request)) as Partial<Group>;
                     // 对修改的字段进行验证
                     if (
                         data.name !== undefined &&
@@ -385,7 +424,7 @@ export default {
                     const site = await api.getSite(id);
                     return createJsonResponse(site, request);
                 } else if (path === "sites" && method === "POST") {
-                    const data = (await request.json()) as SiteInput;
+                    const data = (await validateRequestBody(request)) as SiteInput;
 
                     // 验证站点数据
                     const validation = validateSite(data);
@@ -412,7 +451,7 @@ export default {
                         return createJsonResponse({ error: "无效的ID" }, request, { status: 400 });
                     }
 
-                    const data = (await request.json()) as Partial<Site>;
+                    const data = (await validateRequestBody(request)) as Partial<Site>;
 
                     // 验证更新的站点数据
                     if (data.url !== undefined) {
@@ -462,7 +501,7 @@ export default {
                 }
                 // 批量更新排序
                 else if (path === "group-orders" && method === "PUT") {
-                    const data = (await request.json()) as Array<{ id: number; order_num: number }>;
+                    const data = (await validateRequestBody(request)) as Array<{ id: number; order_num: number }>;
 
                     // 验证排序数据
                     if (!Array.isArray(data)) {
@@ -497,7 +536,7 @@ export default {
                     const result = await api.updateGroupOrder(data);
                     return createJsonResponse({ success: result }, request);
                 } else if (path === "site-orders" && method === "PUT") {
-                    const data = (await request.json()) as Array<{ id: number; order_num: number }>;
+                    const data = (await validateRequestBody(request)) as Array<{ id: number; order_num: number }>;
 
                     // 验证排序数据
                     if (!Array.isArray(data)) {
@@ -542,7 +581,7 @@ export default {
                     return createJsonResponse({ key, value }, request);
                 } else if (path.startsWith("configs/") && method === "PUT") {
                     const key = path.substring("configs/".length);
-                    const data = (await request.json()) as ConfigInput;
+                    const data = (await validateRequestBody(request)) as ConfigInput;
 
                     // 验证配置数据
                     const validation = validateConfig(data);
@@ -590,7 +629,7 @@ export default {
 
                 // 数据导入路由
                 else if (path === "import" && method === "POST") {
-                    const data = (await request.json()) as ExportData;
+                    const data = (await validateRequestBody(request)) as ExportData;
 
                     // 验证导入数据
                     if (
