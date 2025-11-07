@@ -275,8 +275,8 @@ function App() {
   };
 
   // 登出功能
-  const handleLogout = () => {
-    api.logout();
+  const handleLogout = async () => {
+    await api.logout();
     setIsAuthenticated(false);
     setIsAuthRequired(true);
 

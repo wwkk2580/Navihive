@@ -35,7 +35,48 @@ export default {
                     }
 
                     const result = await api.login(loginData as LoginRequest);
+
+                    // 如果登录成功，设置 HttpOnly Cookie
+                    if (result.success && result.token) {
+                        const maxAge = loginData.rememberMe ? 30 * 24 * 60 * 60 : 7 * 24 * 60 * 60;
+
+                        return Response.json(
+                            { success: true, message: result.message },
+                            {
+                                headers: {
+                                    'Set-Cookie': [
+                                        `auth_token=${result.token}`,
+                                        'HttpOnly',
+                                        'Secure',
+                                        'SameSite=Strict',
+                                        `Max-Age=${maxAge}`,
+                                        'Path=/',
+                                    ].join('; '),
+                                },
+                            }
+                        );
+                    }
+
                     return Response.json(result);
+                }
+
+                // 登出路由
+                if (path === "logout" && method === "POST") {
+                    return Response.json(
+                        { success: true, message: '登出成功' },
+                        {
+                            headers: {
+                                'Set-Cookie': [
+                                    'auth_token=',
+                                    'HttpOnly',
+                                    'Secure',
+                                    'SameSite=Strict',
+                                    'Max-Age=0',
+                                    'Path=/',
+                                ].join('; '),
+                            },
+                        }
+                    );
                 }
 
                 // 初始化数据库接口 - 不需要验证
@@ -47,13 +88,35 @@ export default {
                     return new Response("数据库初始化成功", { status: 200 });
                 }
 
-                // 验证中间件 - 除登录接口和初始化接口外，所有请求都需要验证
+                // 验证中间件 - 除登录接口、登出接口和初始化接口外，所有请求都需要验证
                 if (api.isAuthEnabled()) {
-                    // 检查Authorization头部
-                    const authHeader = request.headers.get("Authorization");
+                    // 优先从 Cookie 中读取 token
+                    const cookieHeader = request.headers.get("Cookie");
+                    let token: string | null = null;
 
-                    // 如果没有Authorization头部，返回401错误
-                    if (!authHeader) {
+                    if (cookieHeader) {
+                        const cookies = cookieHeader.split(';').reduce((acc, cookie) => {
+                            const [key, value] = cookie.trim().split('=');
+                            acc[key] = value;
+                            return acc;
+                        }, {} as Record<string, string>);
+
+                        token = cookies['auth_token'];
+                    }
+
+                    // 如果 Cookie 中没有，尝试从 Authorization 头读取（向后兼容）
+                    if (!token) {
+                        const authHeader = request.headers.get("Authorization");
+                        if (authHeader) {
+                            const [authType, headerToken] = authHeader.split(" ");
+                            if (authType === "Bearer" && headerToken) {
+                                token = headerToken;
+                            }
+                        }
+                    }
+
+                    // 如果没有 token，返回401错误
+                    if (!token) {
                         return new Response("请先登录", {
                             status: 401,
                             headers: {
@@ -62,15 +125,7 @@ export default {
                         });
                     }
 
-                    // 提取Token
-                    const [authType, token] = authHeader.split(" ");
-
-                    // 验证Token类型和内容
-                    if (authType !== "Bearer" || !token) {
-                        return new Response("无效的认证信息", { status: 401 });
-                    }
-
-                    // 验证Token有效性 - 改为异步调用
+                    // 验证Token有效性
                     const verifyResult = await api.verifyToken(token);
                     if (!verifyResult.valid) {
                         return new Response("认证已过期或无效，请重新登录", { status: 401 });
