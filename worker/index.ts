@@ -203,7 +203,7 @@ function getCorsHeaders(request: Request): Record<string, string> {
     const requestUrl = new URL(request.url);
 
     // 如果是同源请求，允许
-    let allowedOrigin: string | null = origin;
+    let allowedOrigin: string | null = null;
 
     if (origin) {
         // 检查是否在允许列表中，或者是 workers.dev 子域名
@@ -211,11 +211,15 @@ function getCorsHeaders(request: Request): Record<string, string> {
             origin.endsWith('.workers.dev') ||
             origin === requestUrl.origin; // 同源
 
-        allowedOrigin = isAllowed ? origin : (ALLOWED_ORIGINS[0] || null);
+        allowedOrigin = isAllowed ? origin : null;
     }
 
+    // 如果没有匹配的 origin，使用第一个允许的 origin 或请求源作为默认值
+    // 绝不使用通配符 '*'，以增强安全性
+    const finalOrigin = allowedOrigin || ALLOWED_ORIGINS[0] || requestUrl.origin;
+
     return {
-        'Access-Control-Allow-Origin': allowedOrigin || '*',
+        'Access-Control-Allow-Origin': finalOrigin,
         'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization',
         'Access-Control-Allow-Credentials': 'true',
