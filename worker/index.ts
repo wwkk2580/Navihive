@@ -98,6 +98,87 @@ async function validateRequestBody(request: Request): Promise<unknown> {
     }
 }
 
+/**
+ * 深度验证导出数据
+ */
+function validateExportData(data: unknown): { valid: boolean; errors: string[] } {
+    const errors: string[] = [];
+
+    if (!data || typeof data !== 'object') {
+        errors.push('数据必须是对象');
+        return { valid: false, errors };
+    }
+
+    const d = data as Record<string, unknown>;
+
+    // 验证 version
+    if (!d.version || typeof d.version !== 'string') {
+        errors.push('缺少或无效的版本信息');
+    }
+
+    // 验证 exportDate
+    if (!d.exportDate || typeof d.exportDate !== 'string') {
+        errors.push('缺少或无效的导出日期');
+    }
+
+    // 验证 groups
+    if (!Array.isArray(d.groups)) {
+        errors.push('groups 必须是数组');
+    } else {
+        d.groups.forEach((group: unknown, index: number) => {
+            if (!group || typeof group !== 'object') {
+                errors.push(`groups[${index}]: 必须是对象`);
+                return;
+            }
+            const g = group as Record<string, unknown>;
+            if (!g.name || typeof g.name !== 'string') {
+                errors.push(`groups[${index}]: name 必须是字符串`);
+            }
+            if (typeof g.order_num !== 'number') {
+                errors.push(`groups[${index}]: order_num 必须是数字`);
+            }
+        });
+    }
+
+    // 验证 sites
+    if (!Array.isArray(d.sites)) {
+        errors.push('sites 必须是数组');
+    } else {
+        d.sites.forEach((site: unknown, index: number) => {
+            if (!site || typeof site !== 'object') {
+                errors.push(`sites[${index}]: 必须是对象`);
+                return;
+            }
+            const s = site as Record<string, unknown>;
+            if (!s.name || typeof s.name !== 'string') {
+                errors.push(`sites[${index}]: name 必须是字符串`);
+            }
+            if (!s.url || typeof s.url !== 'string') {
+                errors.push(`sites[${index}]: url 必须是字符串`);
+            } else {
+                try {
+                    new URL(s.url);
+                } catch {
+                    errors.push(`sites[${index}]: url 格式无效`);
+                }
+            }
+            if (typeof s.group_id !== 'number') {
+                errors.push(`sites[${index}]: group_id 必须是数字`);
+            }
+            if (typeof s.order_num !== 'number') {
+                errors.push(`sites[${index}]: order_num 必须是数字`);
+            }
+        });
+    }
+
+    // 验证 configs
+    if (!d.configs || typeof d.configs !== 'object') {
+        errors.push('configs 必须是对象');
+    }
+
+    return { valid: errors.length === 0, errors };
+}
+
 // CORS 配置
 const ALLOWED_ORIGINS = [
     'http://localhost:5173',
@@ -629,21 +710,16 @@ export default {
 
                 // 数据导入路由
                 else if (path === "import" && method === "POST") {
-                    const data = (await validateRequestBody(request)) as ExportData;
+                    const data = await validateRequestBody(request);
 
-                    // 验证导入数据
-                    if (
-                        !data.groups ||
-                        !Array.isArray(data.groups) ||
-                        !data.sites ||
-                        !Array.isArray(data.sites) ||
-                        !data.configs ||
-                        typeof data.configs !== "object"
-                    ) {
+                    // 深度验证导入数据
+                    const validation = validateExportData(data);
+                    if (!validation.valid) {
                         return createJsonResponse(
                             {
                                 success: false,
-                                message: "导入数据格式无效",
+                                message: '导入数据验证失败',
+                                errors: validation.errors,
                             },
                             request,
                             { status: 400 }
