@@ -6,6 +6,70 @@ import {
     type Site,
 } from "../src/API/http";
 
+/**
+ * 生成唯一错误 ID
+ */
+function generateErrorId(): string {
+    return crypto.randomUUID();
+}
+
+/**
+ * 结构化日志
+ */
+interface LogData {
+    timestamp: string;
+    level: 'info' | 'warn' | 'error';
+    message: string;
+    errorId?: string;
+    path?: string;
+    method?: string;
+    details?: unknown;
+}
+
+function log(data: LogData): void {
+    console.log(JSON.stringify({
+        ...data,
+        timestamp: data.timestamp || new Date().toISOString(),
+    }));
+}
+
+/**
+ * 创建错误响应
+ */
+function createErrorResponse(
+    error: unknown,
+    request: Request,
+    context?: string
+): Response {
+    const errorId = generateErrorId();
+    const url = new URL(request.url);
+
+    // 记录详细错误日志
+    log({
+        timestamp: new Date().toISOString(),
+        level: 'error',
+        message: error instanceof Error ? error.message : '未知错误',
+        errorId,
+        path: url.pathname,
+        method: request.method,
+        details: error instanceof Error ? {
+            name: error.name,
+            stack: error.stack,
+        } : error,
+    });
+
+    // 返回用户友好的错误信息
+    return createJsonResponse(
+        {
+            success: false,
+            message: context ? `${context}失败` : '处理请求时发生错误',
+            errorId,
+        },
+        request,
+        { status: 500 }
+    );
+}
+
 // CORS 配置
 const ALLOWED_ORIGINS = [
     'http://localhost:5173',
@@ -515,9 +579,7 @@ export default {
                 // 默认返回404
                 return createResponse("API路径不存在", request, { status: 404 });
             } catch (error) {
-                // 安全处理错误，不暴露内部细节
-                console.error(`API错误: ${error instanceof Error ? error.message : "未知错误"}`);
-                return createResponse(`处理请求时发生错误`, request, { status: 500 });
+                return createErrorResponse(error, request, 'API 请求');
             }
         }
 
