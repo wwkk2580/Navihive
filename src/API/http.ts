@@ -194,23 +194,48 @@ export class NavigationAPI {
 
     try {
       // 解析JWT
-      const [header, payload, signature] = token.split('.');
-      if (!header || !payload || !signature) {
-        throw new Error('无效的Token格式');
+      const parts = token.split('.');
+      if (parts.length !== 3) {
+        return { valid: false };
       }
 
-      // 解码payload
-      const decodedPayload = JSON.parse(atob(payload.replace(/-/g, '+').replace(/_/g, '/')));
+      const [encodedHeader, encodedPayload, signature] = parts;
 
-      // 验证过期时间
-      if (decodedPayload.exp && decodedPayload.exp < Math.floor(Date.now() / 1000)) {
-        throw new Error('Token已过期');
+      // 重新生成签名进行验证
+      const encoder = new TextEncoder();
+      const data = encoder.encode(`${encodedHeader}.${encodedPayload}`);
+      const keyData = encoder.encode(this.secret);
+
+      // 导入密钥
+      const key = await crypto.subtle.importKey(
+        'raw',
+        keyData,
+        { name: 'HMAC', hash: 'SHA-256' },
+        false,
+        ['verify']
+      );
+
+      // 解码签名
+      const signatureBytes = this.base64UrlDecode(signature);
+
+      // 验证签名
+      const isValid = await crypto.subtle.verify('HMAC', key, signatureBytes, data);
+
+      if (!isValid) {
+        return { valid: false };
       }
 
-      // 注意：这个简化版本没有验证签名，仅用于开发/测试
-      // 在生产环境中，应该使用crypto.subtle.verify来验证签名
+      // 解码并验证 payload
+      const payloadStr = atob(encodedPayload.replace(/-/g, '+').replace(/_/g, '/'));
+      const payload = JSON.parse(payloadStr) as Record<string, unknown>;
 
-      return { valid: true, payload: decodedPayload };
+      // 检查过期时间
+      const now = Math.floor(Date.now() / 1000);
+      if (payload.exp && typeof payload.exp === 'number' && payload.exp < now) {
+        return { valid: false };
+      }
+
+      return { valid: true, payload };
     } catch (error) {
       console.error('Token验证失败:', error);
       return { valid: false };
@@ -235,24 +260,59 @@ export class NavigationAPI {
 
     // 创建Header和Payload部分
     const header = { alg: 'HS256', typ: 'JWT' };
-    const encodedHeader = btoa(JSON.stringify(header))
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_')
-      .replace(/=+$/, '');
-    const encodedPayload = btoa(JSON.stringify(tokenPayload))
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_')
-      .replace(/=+$/, '');
+    const encodedHeader = this.base64UrlEncode(JSON.stringify(header));
+    const encodedPayload = this.base64UrlEncode(JSON.stringify(tokenPayload));
 
-    // 创建签名（简化版，仅用于开发/测试）
-    // 在生产环境中，应该使用crypto.subtle.sign生成签名
-    const signature = btoa(this.secret + encodedHeader + encodedPayload)
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_')
-      .replace(/=+$/, '');
+    // 使用 Web Crypto API 进行 HMAC-SHA256 签名
+    const encoder = new TextEncoder();
+    const data = encoder.encode(`${encodedHeader}.${encodedPayload}`);
+    const keyData = encoder.encode(this.secret);
+
+    // 导入密钥
+    const key = await crypto.subtle.importKey(
+      'raw',
+      keyData,
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign']
+    );
+
+    // 生成签名
+    const signatureBuffer = await crypto.subtle.sign('HMAC', key, data);
+    const signature = this.base64UrlEncode(signatureBuffer);
 
     // 组合JWT
     return `${encodedHeader}.${encodedPayload}.${signature}`;
+  }
+
+  // 辅助方法：base64url 编码（支持字符串和 ArrayBuffer）
+  private base64UrlEncode(data: string | ArrayBuffer): string {
+    let base64: string;
+
+    if (typeof data === 'string') {
+      base64 = btoa(data);
+    } else {
+      // ArrayBuffer 转 base64
+      const bytes = new Uint8Array(data);
+      const binary = Array.from(bytes)
+        .map((byte) => String.fromCharCode(byte))
+        .join('');
+      base64 = btoa(binary);
+    }
+
+    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+
+  // 辅助方法：base64url 解码为 ArrayBuffer
+  private base64UrlDecode(base64url: string): ArrayBuffer {
+    const base64 = base64url.replace(/-/g, '+').replace(/_/g, '/');
+    const padding = '='.repeat((4 - (base64.length % 4)) % 4);
+    const binary = atob(base64 + padding);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return bytes.buffer;
   }
 
   // 检查认证是否启用
