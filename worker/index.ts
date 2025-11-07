@@ -6,9 +6,90 @@ import {
     type Site,
 } from "../src/API/http";
 
+// CORS 配置
+const ALLOWED_ORIGINS = [
+    'http://localhost:5173',
+    'http://localhost:8788',
+    // 生产环境会自动允许同源
+];
+
+/**
+ * 获取 CORS 头
+ */
+function getCorsHeaders(request: Request): Record<string, string> {
+    const origin = request.headers.get('Origin');
+    const requestUrl = new URL(request.url);
+
+    // 如果是同源请求，允许
+    let allowedOrigin = origin;
+
+    if (origin) {
+        // 检查是否在允许列表中，或者是 workers.dev 子域名
+        const isAllowed = ALLOWED_ORIGINS.includes(origin) ||
+            origin.endsWith('.workers.dev') ||
+            origin === requestUrl.origin; // 同源
+
+        allowedOrigin = isAllowed ? origin : ALLOWED_ORIGINS[0];
+    }
+
+    return {
+        'Access-Control-Allow-Origin': allowedOrigin || '*',
+        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        'Access-Control-Allow-Credentials': 'true',
+        'Access-Control-Max-Age': '86400',
+    };
+}
+
+/**
+ * 创建带 CORS 头的 JSON 响应
+ */
+function createJsonResponse(
+    data: unknown,
+    request: Request,
+    options: ResponseInit = {}
+): Response {
+    const corsHeaders = getCorsHeaders(request);
+
+    return createJsonResponse(data, {
+        ...options,
+        headers: {
+            ...corsHeaders,
+            ...options.headers,
+        },
+    });
+}
+
+/**
+ * 创建带 CORS 头的普通响应
+ */
+function createResponse(
+    body: string | null,
+    request: Request,
+    options: ResponseInit = {}
+): Response {
+    const corsHeaders = getCorsHeaders(request);
+
+    return createResponse(body, {
+        ...options,
+        headers: {
+            ...corsHeaders,
+            ...options.headers,
+        },
+    });
+}
+
 export default {
     async fetch(request: Request, env: Env) {
         const url = new URL(request.url);
+
+        // 处理 CORS 预检请求
+        if (request.method === 'OPTIONS') {
+            return createResponse(null, {
+                status: 204,
+                headers: getCorsHeaders(request),
+            });
+        }
 
         // API路由处理
         if (url.pathname.startsWith("/api/")) {
@@ -25,11 +106,12 @@ export default {
                     // 验证登录数据
                     const validation = validateLogin(loginData);
                     if (!validation.valid) {
-                        return Response.json(
+                        return createJsonResponse(
                             {
                                 success: false,
                                 message: `验证失败: ${validation.errors?.join(", ")}`,
                             },
+                            request,
                             { status: 400 }
                         );
                     }
@@ -40,8 +122,9 @@ export default {
                     if (result.success && result.token) {
                         const maxAge = loginData.rememberMe ? 30 * 24 * 60 * 60 : 7 * 24 * 60 * 60;
 
-                        return Response.json(
+                        return createJsonResponse(
                             { success: true, message: result.message },
+                            request,
                             {
                                 headers: {
                                     'Set-Cookie': [
@@ -57,13 +140,14 @@ export default {
                         );
                     }
 
-                    return Response.json(result);
+                    return createJsonResponse(result, request);
                 }
 
                 // 登出路由
                 if (path === "logout" && method === "POST") {
-                    return Response.json(
+                    return createJsonResponse(
                         { success: true, message: '登出成功' },
+                        request,
                         {
                             headers: {
                                 'Set-Cookie': [
@@ -83,9 +167,9 @@ export default {
                 if (path === "init" && method === "GET") {
                     const initResult = await api.initDB();
                     if (initResult.alreadyInitialized) {
-                        return new Response("数据库已经初始化过，无需重复初始化", { status: 200 });
+                        return createResponse("数据库已经初始化过，无需重复初始化", request, { status: 200 });
                     }
-                    return new Response("数据库初始化成功", { status: 200 });
+                    return createResponse("数据库初始化成功", request, { status: 200 });
                 }
 
                 // 验证中间件 - 除登录接口、登出接口和初始化接口外，所有请求都需要验证
@@ -117,7 +201,7 @@ export default {
 
                     // 如果没有 token，返回401错误
                     if (!token) {
-                        return new Response("请先登录", {
+                        return createResponse("请先登录", request, {
                             status: 401,
                             headers: {
                                 "WWW-Authenticate": "Bearer",
@@ -128,28 +212,28 @@ export default {
                     // 验证Token有效性
                     const verifyResult = await api.verifyToken(token);
                     if (!verifyResult.valid) {
-                        return new Response("认证已过期或无效，请重新登录", { status: 401 });
+                        return createResponse("认证已过期或无效，请重新登录", request, { status: 401 });
                     }
                 }
 
                 // 路由匹配
                 if (path === "groups" && method === "GET") {
                     const groups = await api.getGroups();
-                    return Response.json(groups);
+                    return createJsonResponse(groups, request);
                 } else if (path.startsWith("groups/") && method === "GET") {
                     const id = parseInt(path.split("/")[1]);
                     if (isNaN(id)) {
-                        return Response.json({ error: "无效的ID" }, { status: 400 });
+                        return createJsonResponse({ error: "无效的ID" }, { status: 400 });
                     }
                     const group = await api.getGroup(id);
-                    return Response.json(group);
+                    return createJsonResponse(group, request);
                 } else if (path === "groups" && method === "POST") {
                     const data = (await request.json()) as GroupInput;
 
                     // 验证分组数据
                     const validation = validateGroup(data);
                     if (!validation.valid) {
-                        return Response.json(
+                        return createJsonResponse(
                             {
                                 success: false,
                                 message: `验证失败: ${validation.errors?.join(", ")}`,
@@ -159,11 +243,11 @@ export default {
                     }
 
                     const result = await api.createGroup(validation.sanitizedData as Group);
-                    return Response.json(result);
+                    return createJsonResponse(result, request);
                 } else if (path.startsWith("groups/") && method === "PUT") {
                     const id = parseInt(path.split("/")[1]);
                     if (isNaN(id)) {
-                        return Response.json({ error: "无效的ID" }, { status: 400 });
+                        return createJsonResponse({ error: "无效的ID" }, { status: 400 });
                     }
 
                     const data = (await request.json()) as Partial<Group>;
@@ -172,7 +256,7 @@ export default {
                         data.name !== undefined &&
                         (typeof data.name !== "string" || data.name.trim() === "")
                     ) {
-                        return Response.json(
+                        return createJsonResponse(
                             {
                                 success: false,
                                 message: "分组名称不能为空且必须是字符串",
@@ -182,7 +266,7 @@ export default {
                     }
 
                     if (data.order_num !== undefined && typeof data.order_num !== "number") {
-                        return Response.json(
+                        return createJsonResponse(
                             {
                                 success: false,
                                 message: "排序号必须是数字",
@@ -192,36 +276,36 @@ export default {
                     }
 
                     const result = await api.updateGroup(id, data);
-                    return Response.json(result);
+                    return createJsonResponse(result, request);
                 } else if (path.startsWith("groups/") && method === "DELETE") {
                     const id = parseInt(path.split("/")[1]);
                     if (isNaN(id)) {
-                        return Response.json({ error: "无效的ID" }, { status: 400 });
+                        return createJsonResponse({ error: "无效的ID" }, { status: 400 });
                     }
 
                     const result = await api.deleteGroup(id);
-                    return Response.json({ success: result });
+                    return createJsonResponse({ success: result }, request);
                 }
                 // 站点相关API
                 else if (path === "sites" && method === "GET") {
                     const groupId = url.searchParams.get("groupId");
                     const sites = await api.getSites(groupId ? parseInt(groupId) : undefined);
-                    return Response.json(sites);
+                    return createJsonResponse(sites, request);
                 } else if (path.startsWith("sites/") && method === "GET") {
                     const id = parseInt(path.split("/")[1]);
                     if (isNaN(id)) {
-                        return Response.json({ error: "无效的ID" }, { status: 400 });
+                        return createJsonResponse({ error: "无效的ID" }, { status: 400 });
                     }
 
                     const site = await api.getSite(id);
-                    return Response.json(site);
+                    return createJsonResponse(site, request);
                 } else if (path === "sites" && method === "POST") {
                     const data = (await request.json()) as SiteInput;
 
                     // 验证站点数据
                     const validation = validateSite(data);
                     if (!validation.valid) {
-                        return Response.json(
+                        return createJsonResponse(
                             {
                                 success: false,
                                 message: `验证失败: ${validation.errors?.join(", ")}`,
@@ -231,11 +315,11 @@ export default {
                     }
 
                     const result = await api.createSite(validation.sanitizedData as Site);
-                    return Response.json(result);
+                    return createJsonResponse(result, request);
                 } else if (path.startsWith("sites/") && method === "PUT") {
                     const id = parseInt(path.split("/")[1]);
                     if (isNaN(id)) {
-                        return Response.json({ error: "无效的ID" }, { status: 400 });
+                        return createJsonResponse({ error: "无效的ID" }, { status: 400 });
                     }
 
                     const data = (await request.json()) as Partial<Site>;
@@ -245,7 +329,7 @@ export default {
                         try {
                             new URL(data.url);
                         } catch {
-                            return Response.json(
+                            return createJsonResponse(
                                 {
                                     success: false,
                                     message: "无效的URL格式",
@@ -259,7 +343,7 @@ export default {
                         try {
                             new URL(data.icon);
                         } catch {
-                            return Response.json(
+                            return createJsonResponse(
                                 {
                                     success: false,
                                     message: "无效的图标URL格式",
@@ -270,15 +354,15 @@ export default {
                     }
 
                     const result = await api.updateSite(id, data);
-                    return Response.json(result);
+                    return createJsonResponse(result, request);
                 } else if (path.startsWith("sites/") && method === "DELETE") {
                     const id = parseInt(path.split("/")[1]);
                     if (isNaN(id)) {
-                        return Response.json({ error: "无效的ID" }, { status: 400 });
+                        return createJsonResponse({ error: "无效的ID" }, { status: 400 });
                     }
 
                     const result = await api.deleteSite(id);
-                    return Response.json({ success: result });
+                    return createJsonResponse({ success: result }, request);
                 }
                 // 批量更新排序
                 else if (path === "group-orders" && method === "PUT") {
@@ -286,7 +370,7 @@ export default {
 
                     // 验证排序数据
                     if (!Array.isArray(data)) {
-                        return Response.json(
+                        return createJsonResponse(
                             {
                                 success: false,
                                 message: "排序数据必须是数组",
@@ -302,7 +386,7 @@ export default {
                             item.order_num === undefined ||
                             typeof item.order_num !== "number"
                         ) {
-                            return Response.json(
+                            return createJsonResponse(
                                 {
                                     success: false,
                                     message: "排序数据格式无效，每个项目必须包含id和order_num",
@@ -313,13 +397,13 @@ export default {
                     }
 
                     const result = await api.updateGroupOrder(data);
-                    return Response.json({ success: result });
+                    return createJsonResponse({ success: result }, request);
                 } else if (path === "site-orders" && method === "PUT") {
                     const data = (await request.json()) as Array<{ id: number; order_num: number }>;
 
                     // 验证排序数据
                     if (!Array.isArray(data)) {
-                        return Response.json(
+                        return createJsonResponse(
                             {
                                 success: false,
                                 message: "排序数据必须是数组",
@@ -335,7 +419,7 @@ export default {
                             item.order_num === undefined ||
                             typeof item.order_num !== "number"
                         ) {
-                            return Response.json(
+                            return createJsonResponse(
                                 {
                                     success: false,
                                     message: "排序数据格式无效，每个项目必须包含id和order_num",
@@ -346,16 +430,16 @@ export default {
                     }
 
                     const result = await api.updateSiteOrder(data);
-                    return Response.json({ success: result });
+                    return createJsonResponse({ success: result }, request);
                 }
                 // 配置相关API
                 else if (path === "configs" && method === "GET") {
                     const configs = await api.getConfigs();
-                    return Response.json(configs);
+                    return createJsonResponse(configs, request);
                 } else if (path.startsWith("configs/") && method === "GET") {
                     const key = path.substring("configs/".length);
                     const value = await api.getConfig(key);
-                    return Response.json({ key, value });
+                    return createJsonResponse({ key, value });
                 } else if (path.startsWith("configs/") && method === "PUT") {
                     const key = path.substring("configs/".length);
                     const data = (await request.json()) as ConfigInput;
@@ -363,7 +447,7 @@ export default {
                     // 验证配置数据
                     const validation = validateConfig(data);
                     if (!validation.valid) {
-                        return Response.json(
+                        return createJsonResponse(
                             {
                                 success: false,
                                 message: `验证失败: ${validation.errors?.join(", ")}`,
@@ -374,7 +458,7 @@ export default {
 
                     // 确保value存在
                     if (data.value === undefined) {
-                        return Response.json(
+                        return createJsonResponse(
                             {
                                 success: false,
                                 message: "配置值必须提供，可以为空字符串",
@@ -384,17 +468,17 @@ export default {
                     }
 
                     const result = await api.setConfig(key, data.value);
-                    return Response.json({ success: result });
+                    return createJsonResponse({ success: result }, request);
                 } else if (path.startsWith("configs/") && method === "DELETE") {
                     const key = path.substring("configs/".length);
                     const result = await api.deleteConfig(key);
-                    return Response.json({ success: result });
+                    return createJsonResponse({ success: result }, request);
                 }
 
                 // 数据导出路由
                 else if (path === "export" && method === "GET") {
                     const data = await api.exportData();
-                    return Response.json(data, {
+                    return createJsonResponse(data, {
                         headers: {
                             "Content-Disposition": "attachment; filename=navhive-data.json",
                             "Content-Type": "application/json",
@@ -415,7 +499,7 @@ export default {
                         !data.configs ||
                         typeof data.configs !== "object"
                     ) {
-                        return Response.json(
+                        return createJsonResponse(
                             {
                                 success: false,
                                 message: "导入数据格式无效",
@@ -425,20 +509,20 @@ export default {
                     }
 
                     const result = await api.importData(data as ExportData);
-                    return Response.json(result);
+                    return createJsonResponse(result, request);
                 }
 
                 // 默认返回404
-                return new Response("API路径不存在", { status: 404 });
+                return createResponse("API路径不存在", request, { status: 404 });
             } catch (error) {
                 // 安全处理错误，不暴露内部细节
                 console.error(`API错误: ${error instanceof Error ? error.message : "未知错误"}`);
-                return new Response(`处理请求时发生错误`, { status: 500 });
+                return createResponse(`处理请求时发生错误`, request, { status: 500 });
             }
         }
 
         // 非API路由默认返回404
-        return new Response("Not Found", { status: 404 });
+        return createResponse("Not Found", request, { status: 404 });
     },
 } satisfies ExportedHandler;
 
