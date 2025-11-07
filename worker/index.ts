@@ -7,6 +7,15 @@ import {
 } from "../src/API/http";
 
 /**
+ * 只读路由白名单 - 这些路由在 AUTH_REQUIRED_FOR_READ=false 时无需认证
+ */
+const READ_ONLY_ROUTES = [
+    { method: 'GET', path: '/api/groups' },
+    { method: 'GET', path: '/api/sites' },
+    { method: 'GET', path: '/api/configs' },
+] as const;
+
+/**
  * 生成唯一错误 ID
  */
 function generateErrorId(): string {
@@ -356,49 +365,67 @@ export default {
                     return createResponse("数据库初始化成功", request, { status: 200 });
                 }
 
-                // 验证中间件 - 除登录接口、登出接口和初始化接口外，所有请求都需要验证
+                // 验证中间件 - 条件认证
                 if (api.isAuthEnabled()) {
-                    // 优先从 Cookie 中读取 token
-                    const cookieHeader = request.headers.get("Cookie");
-                    let token: string | null = null;
+                    const requestPath = `/api/${path}`;
 
-                    if (cookieHeader) {
-                        const cookies = cookieHeader.split(';').reduce((acc, cookie) => {
-                            const [key, value] = cookie.trim().split('=');
-                            if (key) {
-                                acc[key] = value || '';
-                            }
-                            return acc;
-                        }, {} as Record<string, string>);
+                    // 检查是否为只读路由且免认证已启用
+                    const isReadOnlyRoute = READ_ONLY_ROUTES.some(
+                        (route) => route.method === method && route.path === requestPath
+                    );
 
-                        token = cookies['auth_token'] || null;
-                    }
+                    const shouldSkipAuth = isReadOnlyRoute && env.AUTH_REQUIRED_FOR_READ !== 'true';
 
-                    // 如果 Cookie 中没有，尝试从 Authorization 头读取（向后兼容）
-                    if (!token) {
-                        const authHeader = request.headers.get("Authorization");
-                        if (authHeader) {
-                            const [authType, headerToken] = authHeader.split(" ");
-                            if (authType === "Bearer" && headerToken) {
-                                token = headerToken;
+                    if (!shouldSkipAuth) {
+                        // 需要认证：优先从 Cookie 中读取 token
+                        const cookieHeader = request.headers.get("Cookie");
+                        let token: string | null = null;
+
+                        if (cookieHeader) {
+                            const cookies = cookieHeader.split(';').reduce((acc, cookie) => {
+                                const [key, value] = cookie.trim().split('=');
+                                if (key) {
+                                    acc[key] = value || '';
+                                }
+                                return acc;
+                            }, {} as Record<string, string>);
+
+                            token = cookies['auth_token'] || null;
+                        }
+
+                        // 如果 Cookie 中没有，尝试从 Authorization 头读取（向后兼容）
+                        if (!token) {
+                            const authHeader = request.headers.get("Authorization");
+                            if (authHeader) {
+                                const [authType, headerToken] = authHeader.split(" ");
+                                if (authType === "Bearer" && headerToken) {
+                                    token = headerToken;
+                                }
                             }
                         }
-                    }
 
-                    // 如果没有 token，返回401错误
-                    if (!token) {
-                        return createResponse("请先登录", request, {
-                            status: 401,
-                            headers: {
-                                "WWW-Authenticate": "Bearer",
-                            },
+                        // 如果没有 token，返回401错误
+                        if (!token) {
+                            return createResponse("请先登录", request, {
+                                status: 401,
+                                headers: {
+                                    "WWW-Authenticate": "Bearer",
+                                },
+                            });
+                        }
+
+                        // 验证Token有效性
+                        const verifyResult = await api.verifyToken(token);
+                        if (!verifyResult.valid) {
+                            return createResponse("认证已过期或无效，请重新登录", request, { status: 401 });
+                        }
+                    } else {
+                        // 跳过认证
+                        log({
+                            timestamp: new Date().toISOString(),
+                            level: 'info',
+                            message: `允许免认证访问: ${method} ${requestPath}`,
                         });
-                    }
-
-                    // 验证Token有效性
-                    const verifyResult = await api.verifyToken(token);
-                    if (!verifyResult.valid) {
-                        return createResponse("认证已过期或无效，请重新登录", request, { status: 401 });
                     }
                 }
 
@@ -746,6 +773,7 @@ export default {
 interface Env {
     DB: D1Database;
     AUTH_ENABLED?: string;
+    AUTH_REQUIRED_FOR_READ?: string;
     AUTH_USERNAME?: string;
     AUTH_PASSWORD?: string;
     AUTH_SECRET?: string;
