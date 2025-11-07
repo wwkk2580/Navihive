@@ -56,6 +56,12 @@ export interface Site {
   updated_at?: string;
 }
 
+// 分组及其站点 (用于优化 N+1 查询)
+export interface GroupWithSites extends Group {
+  id: number; // 确保 id 存在
+  sites: Site[];
+}
+
 // 新增配置接口
 export interface Config {
   key: string;
@@ -433,6 +439,94 @@ export class NavigationAPI {
       .all<Site>();
     return result.results || [];
   }
+
+  /**
+   * 获取所有分组及其站点 (使用 JOIN 优化,避免 N+1 查询)
+   * 返回格式: GroupWithSites[] (每个分组包含其站点数组)
+   */
+  async getGroupsWithSites(): Promise<GroupWithSites[]> {
+    // 使用 LEFT JOIN 一次性获取所有数据
+    const query = `
+      SELECT
+        g.id as group_id,
+        g.name as group_name,
+        g.order_num as group_order,
+        g.is_public as group_is_public,
+        g.created_at as group_created_at,
+        g.updated_at as group_updated_at,
+        s.id as site_id,
+        s.name as site_name,
+        s.url as site_url,
+        s.icon as site_icon,
+        s.description as site_description,
+        s.notes as site_notes,
+        s.order_num as site_order,
+        s.is_public as site_is_public,
+        s.created_at as site_created_at,
+        s.updated_at as site_updated_at
+      FROM groups g
+      LEFT JOIN sites s ON g.id = s.group_id
+      ORDER BY g.order_num ASC, s.order_num ASC
+    `;
+
+    const result = await this.db.prepare(query).all<{
+      group_id: number;
+      group_name: string;
+      group_order: number;
+      group_is_public?: number;
+      group_created_at: string;
+      group_updated_at: string;
+      site_id: number | null;
+      site_name: string | null;
+      site_url: string | null;
+      site_icon: string | null;
+      site_description: string | null;
+      site_notes: string | null;
+      site_order: number | null;
+      site_is_public?: number;
+      site_created_at: string | null;
+      site_updated_at: string | null;
+    }>();
+
+    // 将查询结果转换为 GroupWithSites 格式
+    const groupsMap = new Map<number, GroupWithSites>();
+
+    for (const row of result.results || []) {
+      // 如果分组不存在,创建它
+      if (!groupsMap.has(row.group_id)) {
+        groupsMap.set(row.group_id, {
+          id: row.group_id,
+          name: row.group_name,
+          order_num: row.group_order,
+          is_public: row.group_is_public,
+          created_at: row.group_created_at,
+          updated_at: row.group_updated_at,
+          sites: [],
+        });
+      }
+
+      // 如果有站点数据,添加到分组的 sites 数组
+      if (row.site_id !== null) {
+        const group = groupsMap.get(row.group_id)!;
+        group.sites.push({
+          id: row.site_id,
+          group_id: row.group_id,
+          name: row.site_name!,
+          url: row.site_url!,
+          icon: row.site_icon || '',
+          description: row.site_description || '',
+          notes: row.site_notes || '',
+          order_num: row.site_order!,
+          is_public: row.site_is_public,
+          created_at: row.site_created_at!,
+          updated_at: row.site_updated_at!,
+        });
+      }
+    }
+
+    return Array.from(groupsMap.values());
+  }
+
 
   async getSite(id: number): Promise<Site | null> {
     const result = await this.db

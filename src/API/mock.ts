@@ -1,4 +1,4 @@
-import { Group, Site, LoginResponse, ExportData, ImportResult } from './http';
+import { Group, Site, LoginResponse, ExportData, ImportResult, GroupWithSites } from './http';
 
 // 模拟数据
 const mockGroups: Group[] = [
@@ -189,6 +189,32 @@ export class MockNavigationClient {
     }
     return [...mockGroups];
   }
+
+  // 获取所有分组及其站点 (使用 JOIN 优化,避免 N+1 查询)
+  async getGroupsWithSites(): Promise<GroupWithSites[]> {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+
+    let groups = [...mockGroups];
+    let sites = [...mockSites];
+
+    // 根据认证状态过滤
+    if (!this.isAuthenticated) {
+      // 访客只能看到公开分组下的公开站点
+      groups = groups.filter(g => g.is_public === 1);
+      const publicGroupIds = groups.map(g => g.id!);
+      sites = sites.filter(site =>
+        site.is_public === 1 && publicGroupIds.includes(site.group_id)
+      );
+    }
+
+    // 组合分组和站点
+    return groups.map(group => ({
+      ...group,
+      id: group.id!, // 确保 id 存在
+      sites: sites.filter(site => site.group_id === group.id)
+    }));
+  }
+
 
   async getGroup(id: number): Promise<Group | null> {
     await new Promise((resolve) => setTimeout(resolve, 200));

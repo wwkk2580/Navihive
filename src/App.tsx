@@ -399,21 +399,9 @@ function App() {
     try {
       setLoading(true);
       setError(null);
-      const groupsData = await api.getGroups();
 
-      // 获取每个分组的站点并确保id存在
-      const groupsWithSites = await Promise.all(
-        groupsData
-          .filter((group) => group.id !== undefined) // 过滤掉没有id的分组
-          .map(async (group) => {
-            const sites = await api.getSites(group.id);
-            return {
-              ...group,
-              id: group.id as number, // 确保id不为undefined
-              sites,
-            } as GroupWithSites;
-          })
-      );
+      // 使用新的 getGroupsWithSites API 优化 N+1 查询问题
+      const groupsWithSites = await api.getGroupsWithSites();
 
       setGroups(groupsWithSites);
     } catch (error) {

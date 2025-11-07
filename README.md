@@ -41,8 +41,10 @@ NaviHive 是基于 Cloudflare Workers 构建的轻量级导航站点，完美替
   - [一键部署方法](#二一键部署方法推荐小白用户)
   - [手动部署方法](#三手动部署方法适合开发者)
   - [初始化与数据库设置](#四初始化与数据库设置)
+- [免登陆访问部署与旧项目迁移](#-免登陆访问部署与旧项目迁移)
 - [使用指南](#-使用指南)
   - [登录系统](#登录系统)
+  - [访客模式与编辑模式](#-访客模式与编辑模式)
   - [配置您的导航站](#配置您的导航站)
   - [使用自定义域名](#使用自定义域名可选)
 - [常见问题解答](#-常见问题解答)
@@ -76,6 +78,7 @@ NaviHive 是基于 Cloudflare Workers 构建的轻量级导航站点，完美替
 ### 🔐 安全保障
 -   🔒 **企业级认证** - JWT + bcrypt 加密，HttpOnly Cookie 防 XSS
 -   👤 **访问控制** - 内置用户认证系统，保护你的私密数据
+-   🪪 **免登陆访客模式** - 可通过 `AUTH_REQUIRED_FOR_READ` 开关允许访客只读访问公开分组与站点
 -   🛡️ **安全防护** - SQL 注入防护、SSRF 防护、请求体大小限制
 
 ### 🎨 用户体验
@@ -180,9 +183,12 @@ NaviHive 提供两种部署方案，请根据您的技术背景选择合适的�
 | 变量名 | 值 | 说明 |
 |--------|-----|------|
 | `AUTH_ENABLED` | `true` | 启用登录认证 |
+| `AUTH_REQUIRED_FOR_READ` | `false` | 是否要求访客认证。`false` 启用免登陆只读模式 |
 | `AUTH_USERNAME` | `admin` | 管理员用户名（可自定义） |
 | `AUTH_PASSWORD` | 见下方说明 | 管理员密码（bcrypt 哈希） |
 | `AUTH_SECRET` | 见下方说明 | JWT 密钥（随机字符串） |
+
+> 如果需要完全关闭访客访问，将 `AUTH_REQUIRED_FOR_READ` 设置为 `true` 并重新部署；保留默认的 `false` 即表示启用公开的只读模式。
 
 **设置密码（重要）：**
 - 访问 [bcrypt 在线生成器](https://bcrypt.online/) 或使用 [Bcrypt Generator](https://bcrypt-generator.com/)
@@ -211,6 +217,7 @@ CREATE TABLE IF NOT EXISTS groups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     order_num INTEGER NOT NULL,
+    is_public INTEGER DEFAULT 1,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -225,6 +232,7 @@ CREATE TABLE IF NOT EXISTS sites (
     description TEXT,
     notes TEXT,
     order_num INTEGER NOT NULL,
+    is_public INTEGER DEFAULT 1,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE
@@ -240,11 +248,17 @@ CREATE TABLE IF NOT EXISTS configs (
 
 -- 标记数据库已初始化
 INSERT INTO configs (key, value) VALUES ('DB_INITIALIZED', 'true');
+
+-- 创建只读模式所需索引
+CREATE INDEX IF NOT EXISTS idx_groups_is_public ON groups(is_public);
+CREATE INDEX IF NOT EXISTS idx_sites_is_public ON sites(is_public);
 ```
 
 ![执行 SQL](https://img.zhengmi.org/file/1743843528319_image.png)
 
 5. 确认每条命令都执行成功（显示 ✓ Success）
+
+> 如果你已经运行过旧版本的 SQL，只需在数据库控制台执行 `migrations/002_add_is_public.sql` 中的语句，或在本地使用 `wrangler d1 execute navigation-db --file=migrations/002_add_is_public.sql` 即可完成字段升级。
 
 #### 第六步：访问你的导航站
 
@@ -252,6 +266,7 @@ INSERT INTO configs (key, value) VALUES ('DB_INITIALIZED', 'true');
 2. 复制项目的访问地址（格式：`https://your-project.username.workers.dev`）
 3. 在浏览器中打开该地址
 4. 使用你设置的用户名和密码登录
+5. 不登录直接访问同一个链接，可验证访客模式是否只展示公开分组（默认开启）
 
 🎉 恭喜！你的 NaviHive 导航站已经部署成功！
 
@@ -340,6 +355,7 @@ database_id = "43ff28e1-42d6-4e53-9657-0702ae1353b6"  # 这是你的数据库 ID
     ],
     "vars": {
         "AUTH_ENABLED": "true",
+        "AUTH_REQUIRED_FOR_READ": "false",  // 免登陆访问开关，true 表示必须登录
         "AUTH_USERNAME": "admin",  // 自定义管理员用户名
         "AUTH_PASSWORD": "见下方说明",  // bcrypt 哈希值
         "AUTH_SECRET": "见下方说明"  // 32位随机字符串
@@ -388,20 +404,11 @@ node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
 #### 8. 初始化数据库
 
 ```bash
-wrangler d1 execute navigation-db --file=schema.sql
+wrangler d1 execute navigation-db --file=init_table.sql
+wrangler d1 execute navigation-db --file=migrations/002_add_is_public.sql
 ```
 
-如果没有 `schema.sql` 文件，可以直接执行：
-
-```bash
-wrangler d1 execute navigation-db --command="CREATE TABLE IF NOT EXISTS groups (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, order_num INTEGER NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);"
-
-wrangler d1 execute navigation-db --command="CREATE TABLE IF NOT EXISTS sites (id INTEGER PRIMARY KEY AUTOINCREMENT, group_id INTEGER NOT NULL, name TEXT NOT NULL, url TEXT NOT NULL, icon TEXT, description TEXT, notes TEXT, order_num INTEGER NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE);"
-
-wrangler d1 execute navigation-db --command="CREATE TABLE IF NOT EXISTS configs (key TEXT PRIMARY KEY, value TEXT NOT NULL, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP);"
-
-wrangler d1 execute navigation-db --command="INSERT INTO configs (key, value) VALUES ('DB_INITIALIZED', 'true');"
-```
+上述两步会创建基础表结构，并为分组/站点添加 `is_public` 字段与索引。如果你更习惯直接执行 SQL，也可以参考 `init_table.sql` 与 `migrations/002_add_is_public.sql` 内的语句手动执行。
 
 #### 9. 本地开发测试（可选）
 
@@ -452,7 +459,12 @@ wrangler d1 export navigation-db
 
 # 查询数据库
 wrangler d1 execute navigation-db --command="SELECT * FROM groups"
+
+# 验证免登陆 API
+curl https://<your-worker>.workers.dev/api/groups
 ```
+
+> 将 `<your-worker>` 替换为你的 Workers 子域名。未登录即可看到公开分组则表示免登陆模式配置正确。
 
 ### 配置自定义域名
 
@@ -485,6 +497,31 @@ wrangler d1 execute navigation-db --file=backup.sql
 # 登录后点击"网站设置" > "导入数据"
 ```
 
+## 🧭 免登陆访问部署与旧项目迁移
+
+### 新部署 Checklist
+- 配置 `AUTH_REQUIRED_FOR_READ=false`（默认值）以允许访客访问公开分组，若希望完全私有可改为 `true`
+- 初始化数据库后立即执行 `migrations/002_add_is_public.sql`，确保 `is_public` 字段和索引就绪
+- 在 Cloudflare 控制台或 `wrangler tail` 中确认后台日志存在 `允许免认证访问` 字样
+- 访问 `/api/groups`、`/api/sites` 测试无 Token 请求是否只返回公开数据
+
+### 旧版本 (≤ v1.0.x) 升级到免登陆访问
+1. **备份数据**：`wrangler d1 export navigation-db > backup.sql`
+2. **拉取最新代码**：`git pull` 后重新安装依赖（如有必要）
+3. **新增环境变量**：在 `wrangler.jsonc` 和 Cloudflare 控制台同时添加 `AUTH_REQUIRED_FOR_READ`，推荐设置为 `false`
+4. **执行数据库迁移**：
+   ```bash
+   wrangler d1 execute navigation-db --file=migrations/002_add_is_public.sql
+   # 生产环境可在 Cloudflare D1 控制台执行同样的 SQL
+   ```
+5. **重新部署**：`pnpm build && pnpm deploy`（或使用 GitHub Action/一键部署按钮）
+6. **验证**：
+   - 访客直接访问网页仅看到 `is_public=1` 的分组与站点
+   - 管理员登录后可见全部内容，写操作仍需认证
+   - `wrangler tail` 中无未经授权的写操作日志
+
+> 如果需要暂时关闭访客访问，无需回滚数据库，只需将 `AUTH_REQUIRED_FOR_READ` 改为 `true` 并重新部署即可。
+
 ## 📝 使用指南
 
 ### 🚪 登录系统
@@ -494,6 +531,12 @@ wrangler d1 execute navigation-db --file=backup.sql
 1. 在登录页面输入用户名和密码
 2. 可选择"记住我"延长登录时效（30 天）
 3. 登录成功后，系统会自动跳转到导航主页
+
+### 👀 访客模式与编辑模式
+- 未登录时默认运行在 **访客模式**，只展示 `is_public = 1` 的分组与站点，任何写操作入口均被隐藏
+- 登录后自动切换到 **编辑模式**，可新增/排序/删除内容；登出会回到访客模式
+- 访客模式开关由 `AUTH_REQUIRED_FOR_READ` 控制；改为 `true` 可恢复旧版“必须登录才能访问”体验
+- 需要将某个分组或站点设为私密时，可在 Cloudflare D1 控制台执行 `UPDATE groups SET is_public = 0 WHERE id = ?;` / `UPDATE sites SET is_public = 0 WHERE id = ?;`（即将上线的 UI 开关会进一步简化该流程）
 
 ### ⚙️ 配置导航站
 
@@ -771,9 +814,17 @@ A: 不可以。Cloudflare Workers 强制使用 HTTPS，这是为了保证你的�
 **Q: 其他人能访问我的导航站吗？**
 
 A:
-- **未登录用户**：只能看到登录页面，无法访问任何数据
-- **已登录用户**：可以完全控制导航站（增删改查）
-- **建议**：不要分享你的登录凭证；如需多人协作，考虑为每个人创建独立账号（需要修改代码）
+- `AUTH_REQUIRED_FOR_READ=false`（默认）：未登录用户可以访问公开分组/站点，但无法看到私密内容，也没有写权限
+- `AUTH_REQUIRED_FOR_READ=true`：未登录用户会被要求先登录，行为与旧版本一致
+- 已登录管理员仍然拥有全部增删改查权限
+- 建议为敏感内容设置 `is_public = 0`，并仅分享公开链接给访客
+
+**Q: 如何关闭（或重新开启）访客访问？**
+
+A:
+1. 在 `wrangler.jsonc` 及 Cloudflare 控制台把 `AUTH_REQUIRED_FOR_READ` 改为目标值（`true`=关闭访客，`false`=开启）
+2. 重新部署 Worker（`pnpm deploy` 或通过 CI）
+3. 刷新页面后即可生效，无需迁移数据库
 
 ---
 
@@ -858,6 +909,8 @@ Cloudflare-Navihive/
 │   ├── App.tsx              # 主应用组件
 │   └── main.tsx             # 应用入口
 ├── public/                  # 静态资源
+├── migrations/              # D1 数据库迁移脚本（含 is_public 字段）
+│   └── 002_add_is_public.sql
 ├── scripts/                 # 工具脚本
 │   └── hash-password.ts     # 密码哈希生成工具
 ├── wrangler.jsonc           # Cloudflare Workers 配置
@@ -876,6 +929,7 @@ Cloudflare-Navihive/
 | `src/API/client.ts` | API 客户端，处理所有 HTTP 请求 |
 | `wrangler.jsonc` | Workers 配置，环境变量，D1 绑定 |
 | `vite.config.ts` | 前端构建配置，开发服务器设置 |
+| `migrations/002_add_is_public.sql` | 为免登陆模式添加 `is_public` 字段和索引 |
 
 ## 🤝 贡献指南
 
@@ -963,6 +1017,12 @@ pnpm format
 感谢所有提交 Issue、PR 和 Star 的开发者们！🌟
 
 ## 📅 更新日志
+
+### v1.1.0 (2025-11-08) - 免登陆访客模式
+- ✨ 新增 `AUTH_REQUIRED_FOR_READ` 开关，支持公开只读访问
+- 🗃️ 数据库新增 `is_public` 字段及索引，私密/公开内容可精细控制
+- 🧭 前端添加访客/编辑双模式，未登录时仅渲染公开内容
+- 📘 文档与部署流程更新，提供旧项目迁移指南
 
 ### 🔒 安全更新版本 (2025-11-08)
 - 🔐 **[CR-001]** 实现 JWT 签名（Web Crypto API + HMAC-SHA256）

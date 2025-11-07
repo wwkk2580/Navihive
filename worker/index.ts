@@ -439,7 +439,26 @@ export default {
                 }
 
                 // 路由匹配
-                if (path === "groups" && method === "GET") {
+                // GET /api/groups-with-sites 获取所有分组及其站点 (优化 N+1 查询)
+                if (path === "groups-with-sites" && method === "GET") {
+                    const groupsWithSites = await api.getGroupsWithSites();
+
+                    // 根据认证状态过滤数据
+                    if (!isAuthenticated) {
+                        // 未认证用户只能看到公开分组下的公开站点
+                        const filteredGroups = groupsWithSites
+                            .filter(group => group.is_public === 1)
+                            .map(group => ({
+                                ...group,
+                                sites: group.sites.filter(site => site.is_public === 1)
+                            }));
+                        return createJsonResponse(filteredGroups, request);
+                    }
+
+                    return createJsonResponse(groupsWithSites, request);
+                }
+                // GET /api/groups 获取所有分组
+                else if (path === "groups" && method === "GET") {
                     // 根据认证状态过滤查询
                     let query = 'SELECT * FROM groups';
                     const params: number[] = [];
