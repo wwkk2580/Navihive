@@ -257,10 +257,32 @@ wrangler d1 create navigation-db
     "vars": {
         "AUTH_ENABLED": "true",  // 是否启用认证
         "AUTH_USERNAME": "admin",  // 管理员用户名
-        "AUTH_PASSWORD": "password",  // 管理员密码 (请修改为安全密码)
+        "AUTH_PASSWORD": "$2a$10$...",  // 管理员密码的 bcrypt 哈希 (使用 pnpm hash-password 生成)
         "AUTH_SECRET": "your-secret-key"  // JWT密钥 (请使用随机字符串)
     }
 }
+```
+
+**重要：密码安全**
+
+为了提高安全性，系统使用 bcrypt 对密码进行哈希加密。请按以下步骤设置密码：
+
+1. 使用内置命令生成密码哈希：
+```bash
+pnpm hash-password 你的密码
+```
+
+2. 将输出的哈希值复制到 `AUTH_PASSWORD` 环境变量中。
+
+示例：
+```bash
+$ pnpm hash-password mySecurePassword123
+正在生成密码哈希...
+
+生成的密码哈希:
+$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy
+
+请将此哈希值设置为 AUTH_PASSWORD 环境变量
 ```
 
 #### 5. 开发模式
@@ -325,8 +347,11 @@ pnpm deploy
 
 ## 🔧 常见问题解答
 
-**Q: 我忘记了管理员密码，怎么办？**  
-A: 您可以通过修改环境变量重置密码。在 Cloudflare 控制面板中，进入您的项目，点击"设置" > "环境变量"，修改`AUTH_PASSWORD`的值。
+**Q: 我忘记了管理员密码，怎么办？**
+A: 您需要生成一个新的密码哈希并更新环境变量：
+1. 在本地运行 `pnpm hash-password 新密码` 生成新的哈希值
+2. 在 Cloudflare 控制面板中，进入您的项目，点击"设置" > "环境变量"
+3. 修改 `AUTH_PASSWORD` 的值为新生成的哈希值
 
 **Q: 我想关闭登录认证，可以吗？**  
 A: 可以。将环境变量`AUTH_ENABLED`设置为`false`即可关闭认证功能。

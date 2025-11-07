@@ -11,7 +11,8 @@
         "format:check": "prettier --check \"src/**/*.{js,jsx,ts,tsx,json,css,scss,md}\"",
         "preview": "pnpm run build && vite preview",
         "deploy": "pnpm run build && wrangler deploy",
-        "cf-typegen": "wrangler types"
+        "cf-typegen": "wrangler types",
+        "hash-password": "tsx scripts/hash-password.ts"
     },
     "dependencies": {
         "@cfworker/jwt": "^7.0.4",
@@ -25,6 +26,8 @@
         "@mui/icons-material": "^7.0.1",
         "@mui/material": "^7.0.1",
         "@tailwindcss/vite": "^4.1.2",
+        "@types/bcryptjs": "^3.0.0",
+        "bcryptjs": "^3.0.3",
         "dnd-kit": "^0.0.2",
         "react": "^19.0.0",
         "react-dom": "^19.0.0",
@@ -47,6 +50,7 @@
         "globals": "^15.15.0",
         "path": "^0.12.7",
         "prettier": "^3.2.8",
+        "tsx": "^4.20.6",
         "typescript": "~5.7.2",
         "typescript-eslint": "^8.24.1",
         "vite": "^6.2.0",

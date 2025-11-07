@@ -30,6 +30,9 @@ pnpm lint
 pnpm format
 pnpm format:check
 
+# Security: Generate password hash for authentication
+pnpm hash-password <your-password>
+
 # Generate Cloudflare Workers types
 pnpm cf-typegen
 ```
@@ -98,7 +101,7 @@ wrangler tail
   "vars": {
     "AUTH_ENABLED": "true",    // Enable/disable authentication
     "AUTH_USERNAME": "admin",   // Admin username
-    "AUTH_PASSWORD": "password", // Admin password (change in production)
+    "AUTH_PASSWORD": "$2a$10$...", // Admin password bcrypt hash (generate with: pnpm hash-password yourPassword)
     "AUTH_SECRET": "secret-key"  // JWT signing key (use strong random value)
   },
   "d1_databases": [{
@@ -108,6 +111,8 @@ wrangler tail
   }]
 }
 ```
+
+**Password Security**: Use `pnpm hash-password <password>` to generate bcrypt hashes for AUTH_PASSWORD.
 
 ### Frontend Environment Variables
 - `VITE_USE_REAL_API`: Set to "true" to use real API in development (default: use mock)

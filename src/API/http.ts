@@ -1,5 +1,6 @@
 // src/api/http.ts
 // 不使用外部JWT库，改为内置的crypto API
+import * as bcrypt from 'bcryptjs';
 
 // 定义D1数据库类型
 interface D1Database {
@@ -27,7 +28,7 @@ interface Env {
   DB: D1Database;
   AUTH_ENABLED?: string; // 是否启用身份验证
   AUTH_USERNAME?: string; // 认证用户名
-  AUTH_PASSWORD?: string; // 认证密码
+  AUTH_PASSWORD?: string; // 认证密码哈希 (bcrypt)
   AUTH_SECRET?: string; // JWT密钥
 }
 
@@ -107,14 +108,14 @@ export class NavigationAPI {
   private db: D1Database;
   private authEnabled: boolean;
   private username: string;
-  private password: string;
+  private passwordHash: string; // 存储bcrypt哈希而非明文密码
   private secret: string;
 
   constructor(env: Env) {
     this.db = env.DB;
     this.authEnabled = env.AUTH_ENABLED === 'true';
     this.username = env.AUTH_USERNAME || '';
-    this.password = env.AUTH_PASSWORD || '';
+    this.passwordHash = env.AUTH_PASSWORD || ''; // 现在存储的是哈希
     this.secret = env.AUTH_SECRET || 'DefaultSecretKey';
   }
 
@@ -166,8 +167,18 @@ export class NavigationAPI {
       };
     }
 
-    // 验证用户名和密码
-    if (loginRequest.username === this.username && loginRequest.password === this.password) {
+    // 验证用户名
+    if (loginRequest.username !== this.username) {
+      return {
+        success: false,
+        message: '用户名或密码错误',
+      };
+    }
+
+    // 使用 bcrypt 验证密码
+    const isPasswordValid = await bcrypt.compare(loginRequest.password, this.passwordHash);
+
+    if (isPasswordValid) {
       // 生成JWT令牌，传递记住我参数
       const token = await this.generateToken(
         { username: loginRequest.username },
