@@ -257,11 +257,19 @@ const GroupCard: React.FC<GroupCardProps> = ({
 
   // 保存站点排序
   const handleSaveSiteOrder = () => {
-    onSaveSiteOrder(group.id!, sites);
+    if (!group.id) {
+      console.error('分组 ID 不存在,无法保存排序');
+      return;
+    }
+    onSaveSiteOrder(group.id, sites);
   };
 
   // 处理排序按钮点击
   const handleSortClick = () => {
+    if (!group.id) {
+      console.error('分组 ID 不存在,无法开始排序');
+      return;
+    }
     if (group.sites.length < 2) {
       setSnackbarMessage('至少需要2个站点才能进行排序');
       setSnackbarOpen(true);
@@ -271,7 +279,7 @@ const GroupCard: React.FC<GroupCardProps> = ({
     if (isCollapsed) {
       setIsCollapsed(false);
     }
-    onStartSiteSort(group.id!);
+    onStartSiteSort(group.id);
   };
 
   // 关闭提示消息
@@ -371,12 +379,12 @@ const GroupCard: React.FC<GroupCardProps> = ({
           ) : (
             sortMode === 'None' && viewMode === 'edit' && ( // 只在编辑模式显示按钮
               <>
-                {onAddSite && (
+                {onAddSite && group.id && (
                   <Button
                     variant='contained'
                     color='primary'
                     size='small'
-                    onClick={() => onAddSite(group.id!)}
+                    onClick={() => onAddSite(group.id)}
                     startIcon={<AddIcon />}
                     sx={{
                       minWidth: 'auto',

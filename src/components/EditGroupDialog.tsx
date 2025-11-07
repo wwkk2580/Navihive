@@ -61,7 +61,11 @@ const EditGroupDialog: React.FC<EditGroupDialogProps> = ({
       setShowDeleteConfirm(true);
     } else {
       // 确认删除
-      onDelete(group.id!);
+      if (!group.id) {
+        console.error('分组 ID 不存在,无法删除');
+        return;
+      }
+      onDelete(group.id);
     }
   };
 
