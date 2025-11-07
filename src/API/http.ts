@@ -350,19 +350,26 @@ export class NavigationAPI {
   }
 
   async updateGroup(id: number, group: Partial<Group>): Promise<Group | null> {
-    // 使用参数化查询，避免SQL注入
+    // 字段白名单
+    const ALLOWED_FIELDS = ['name', 'order_num'] as const;
+    type AllowedField = (typeof ALLOWED_FIELDS)[number];
+
     const updates: string[] = ['updated_at = CURRENT_TIMESTAMP'];
     const params: (string | number)[] = [];
 
-    // 安全地添加字段
-    if (group.name !== undefined) {
-      updates.push('name = ?');
-      params.push(group.name);
-    }
+    // 只允许更新白名单中的字段
+    Object.entries(group).forEach(([key, value]) => {
+      if (ALLOWED_FIELDS.includes(key as AllowedField) && value !== undefined) {
+        updates.push(`${key} = ?`);
+        params.push(value);
+      } else if (key !== 'id' && key !== 'created_at' && key !== 'updated_at') {
+        console.warn(`尝试更新不允许的字段: ${key}`);
+      }
+    });
 
-    if (group.order_num !== undefined) {
-      updates.push('order_num = ?');
-      params.push(group.order_num);
+    if (updates.length === 1) {
+      // 只有 updated_at，没有实际更新
+      throw new Error('没有可更新的字段');
     }
 
     // 构建安全的参数化查询
@@ -371,10 +378,7 @@ export class NavigationAPI {
     )} WHERE id = ? RETURNING id, name, order_num, created_at, updated_at`;
     params.push(id);
 
-    const result = await this.db
-      .prepare(query)
-      .bind(...params)
-      .all<Group>();
+    const result = await this.db.prepare(query).bind(...params).all<Group>();
 
     if (!result.results || result.results.length === 0) {
       return null;
@@ -444,44 +448,34 @@ export class NavigationAPI {
   }
 
   async updateSite(id: number, site: Partial<Site>): Promise<Site | null> {
-    // 使用参数化查询，避免SQL注入
+    // 字段白名单
+    const ALLOWED_FIELDS = [
+      'group_id',
+      'name',
+      'url',
+      'icon',
+      'description',
+      'notes',
+      'order_num',
+    ] as const;
+    type AllowedField = (typeof ALLOWED_FIELDS)[number];
+
     const updates: string[] = ['updated_at = CURRENT_TIMESTAMP'];
     const params: (string | number)[] = [];
 
-    // 安全地添加字段
-    if (site.group_id !== undefined) {
-      updates.push('group_id = ?');
-      params.push(site.group_id);
-    }
+    // 只允许更新白名单中的字段
+    Object.entries(site).forEach(([key, value]) => {
+      if (ALLOWED_FIELDS.includes(key as AllowedField) && value !== undefined) {
+        updates.push(`${key} = ?`);
+        params.push(value);
+      } else if (key !== 'id' && key !== 'created_at' && key !== 'updated_at') {
+        console.warn(`尝试更新不允许的字段: ${key}`);
+      }
+    });
 
-    if (site.name !== undefined) {
-      updates.push('name = ?');
-      params.push(site.name);
-    }
-
-    if (site.url !== undefined) {
-      updates.push('url = ?');
-      params.push(site.url);
-    }
-
-    if (site.icon !== undefined) {
-      updates.push('icon = ?');
-      params.push(site.icon);
-    }
-
-    if (site.description !== undefined) {
-      updates.push('description = ?');
-      params.push(site.description);
-    }
-
-    if (site.notes !== undefined) {
-      updates.push('notes = ?');
-      params.push(site.notes);
-    }
-
-    if (site.order_num !== undefined) {
-      updates.push('order_num = ?');
-      params.push(site.order_num);
+    if (updates.length === 1) {
+      // 只有 updated_at，没有实际更新
+      throw new Error('没有可更新的字段');
     }
 
     // 构建安全的参数化查询
@@ -490,10 +484,7 @@ export class NavigationAPI {
     )} WHERE id = ? RETURNING id, group_id, name, url, icon, description, notes, order_num, created_at, updated_at`;
     params.push(id);
 
-    const result = await this.db
-      .prepare(query)
-      .bind(...params)
-      .all<Site>();
+    const result = await this.db.prepare(query).bind(...params).all<Site>();
 
     if (!result.results || result.results.length === 0) {
       return null;
