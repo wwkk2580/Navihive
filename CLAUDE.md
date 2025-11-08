@@ -92,10 +92,29 @@ wrangler tail
    - API responses cached in component state
    - Drag-and-drop state managed by DND Kit
 
-4. **Database Schema**: Three main tables
-   - `groups`: Navigation categories with ordering
-   - `sites`: Website links associated with groups
+4. **Database Schema**: Three main tables with guest access support
+   - `groups`: Navigation categories with ordering and `is_public` flag
+   - `sites`: Website links associated with groups with `is_public` flag
    - `configs`: Key-value store for site settings (title, name, custom CSS)
+
+## v1.1.0 New Features
+
+### Guest Access Mode (Public/Private Content)
+- **Feature**: Allow unauthenticated users to view public content
+- **Configuration**: `AUTH_REQUIRED_FOR_READ` environment variable
+  - `false` (default): Guest mode enabled, public content accessible
+  - `true`: All content requires authentication (legacy behavior)
+- **Database Fields**: Both `groups` and `sites` tables have `is_public` field (0=private, 1=public)
+- **Access Control**:
+  - Guests: Only see `is_public=1` groups and sites
+  - Authenticated admins: See all content
+  - Write operations always require authentication
+
+### Login Rate Limiting
+- **Implementation**: `SimpleRateLimiter` class in `worker/index.ts`
+- **Default Limit**: 5 attempts per 15 minutes per IP
+- **Behavior**: Returns 429 status when limit exceeded
+- **Logging**: Records IP address of rate-limited requests
 
 ## Configuration
 
@@ -104,6 +123,7 @@ wrangler tail
 {
   "vars": {
     "AUTH_ENABLED": "true",    // Enable/disable authentication
+    "AUTH_REQUIRED_FOR_READ": "false",  // Guest mode: false=allow public access, true=require auth for all
     "AUTH_USERNAME": "admin",   // Admin username
     "AUTH_PASSWORD": "$2a$10$...", // Admin password bcrypt hash (generate with: pnpm hash-password yourPassword)
     "AUTH_SECRET": "secret-key"  // JWT signing key (use strong random value)
@@ -131,6 +151,7 @@ CREATE TABLE IF NOT EXISTS groups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
     order_num INTEGER NOT NULL,
+    is_public INTEGER DEFAULT 1,  -- New in v1.1.0: 0=private, 1=public
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -145,6 +166,7 @@ CREATE TABLE IF NOT EXISTS sites (
     description TEXT,
     notes TEXT,
     order_num INTEGER NOT NULL,
+    is_public INTEGER DEFAULT 1,  -- New in v1.1.0: 0=private, 1=public
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE
@@ -160,7 +182,13 @@ CREATE TABLE IF NOT EXISTS configs (
 
 -- Mark as initialized
 INSERT INTO configs (key, value) VALUES ('DB_INITIALIZED', 'true');
+
+-- Create indexes for guest mode performance (v1.1.0)
+CREATE INDEX IF NOT EXISTS idx_groups_is_public ON groups(is_public);
+CREATE INDEX IF NOT EXISTS idx_sites_is_public ON sites(is_public);
 ```
+
+**Migration from v1.0.x**: If upgrading from an older version, run `migrations/002_add_is_public.sql`
 
 ## Key Code Locations
 
@@ -186,11 +214,20 @@ INSERT INTO configs (key, value) VALUES ('DB_INITIALIZED', 'true');
 
 ### Authentication Flow
 1. User submits credentials via LoginForm
-2. Worker validates against AUTH_USERNAME/AUTH_PASSWORD
-3. On success, JWT token generated with configurable expiry (7 days or 30 days if "remember me" checked)
-4. Token stored in localStorage
-5. All subsequent API requests include `Authorization: Bearer <token>` header
-6. Worker middleware validates token before processing protected routes
+2. Worker validates against AUTH_USERNAME/AUTH_PASSWORD (bcrypt verification)
+3. Worker checks rate limit (5 attempts/15 min per IP)
+4. On success, JWT token generated with configurable expiry (7 days or 30 days if "remember me" checked)
+5. Token stored in **HttpOnly Cookie** (primary, prevents XSS) and localStorage (fallback for compatibility)
+6. All subsequent API requests automatically include cookie; Authorization header supported as fallback
+7. Worker middleware validates token before processing protected routes
+8. `/api/auth/status` endpoint verifies authentication state
+
+### Guest Access Flow (v1.1.0)
+1. Unauthenticated requests to read-only routes (`/api/groups`, `/api/sites`, `/api/groups-with-sites`, `/api/configs`)
+2. If `AUTH_REQUIRED_FOR_READ=false`, middleware checks for token but doesn't require it
+3. If token exists and valid, `isAuthenticated=true` (show all content)
+4. If no token or invalid, `isAuthenticated=false` (show only `is_public=1` content)
+5. Write operations (POST/PUT/DELETE) always require valid authentication
 
 ### Drag-and-Drop Ordering
 1. User clicks "编辑排序" (Edit Sort) button
@@ -316,18 +353,25 @@ pnpm format
 
 ### Phase 2: High Priority Fixes (Completed)
 - ✅ **HS-001**: HttpOnly cookies for secure token storage
+- ✅ **HS-002**: Login rate limiting (5 attempts/15 min, in-memory SimpleRateLimiter)
 - ✅ **HS-003**: bcrypt password hashing
 - ✅ **HS-004**: CORS configuration with origin validation
 - ✅ **HS-005**: Structured error handling with unique error IDs
-- ⏭️ **HS-002**: Rate limiting (skipped - requires KV namespace setup)
 
 ### Phase 3: Medium Priority Fixes (Completed)
 - ✅ **MS-001**: TypeScript strict mode enabled (65+ type errors fixed)
 - ✅ **MS-005**: Request body size limits (1MB max)
 - ✅ **MS-007**: Deep data validation for import operations
 
-### Total Security Commits: 10
-All security fixes have been committed to git with detailed commit messages and are ready for deployment.
+### v1.1.0 Feature Additions (Completed)
+- ✅ Guest access mode with `AUTH_REQUIRED_FOR_READ` configuration
+- ✅ Public/private content control via `is_public` database field
+- ✅ Database migration script for existing deployments
+- ✅ Frontend dual-mode support (guest/authenticated views)
+- ✅ Authentication middleware refactoring for conditional access
+
+### Total Security & Feature Commits: 14
+All security fixes and v1.1.0 features have been committed to git with detailed commit messages and are deployed.
 
 ## Troubleshooting
 

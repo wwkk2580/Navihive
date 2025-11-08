@@ -1,7 +1,8 @@
-import { Group, Site, LoginResponse, ExportData, ImportResult } from './http';
+import { Group, Site, LoginResponse, ExportData, ImportResult, GroupWithSites } from './http';
 
 export class NavigationClient {
   private baseUrl: string;
+  public isAuthenticated: boolean = false; // 新增：公开认证状态
 
   constructor(baseUrl = '/api') {
     this.baseUrl = baseUrl;
@@ -33,6 +34,11 @@ export class NavigationClient {
 
       const data = await response.json();
 
+      // 登陆成功，更新认证状态
+      if (data.success) {
+        this.isAuthenticated = true;
+      }
+
       // Cookie 会自动由浏览器设置，无需手动处理
       return data;
     } catch (error) {
@@ -51,12 +57,15 @@ export class NavigationClient {
         method: 'POST',
         credentials: 'include',
       });
+
+      // 登出成功，更新认证状态
+      this.isAuthenticated = false;
     } catch (error) {
       console.error('登出失败:', error);
     }
   }
 
-  private async request(endpoint: string, options = {}) {
+  private async request(endpoint: string, options: RequestInit = {}) {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
@@ -70,12 +79,31 @@ export class NavigationClient {
     });
 
     if (response.status === 401) {
-      // 认证失败，Cookie 可能已过期
+      // 认证失败
+      this.isAuthenticated = false;
+
+      // 对于 GET 请求（只读操作），允许返回空数据而不抛出异常
+      if (!options.method || options.method === 'GET') {
+        // 尝试解析响应，如果是访客模式可能返回部分数据
+        try {
+          return response.json();
+        } catch {
+          // 如果无法解析，返回空数组/对象
+          return endpoint.includes('config') ? {} : [];
+        }
+      }
+
+      // 对于写操作（POST/PUT/DELETE），必须抛出异常
       throw new Error('认证已过期或无效，请重新登录');
     }
 
     if (!response.ok) {
       throw new Error(`API错误: ${response.status}`);
+    }
+
+    // 请求成功，标记为已认证（如果之前未认证）
+    if (response.ok && !this.isAuthenticated) {
+      this.isAuthenticated = true;
     }
 
     return response.json();
@@ -84,20 +112,20 @@ export class NavigationClient {
   // 检查身份验证状态
   async checkAuthStatus(): Promise<boolean> {
     try {
-      // 尝试获取配置，如果成功则表示已认证
-      await this.getConfigs();
-      return true;
-    } catch (error) {
-      console.log('认证检查:', error);
+      // 调用专门的认证状态检查端点
+      const response = await fetch(`${this.baseUrl}/auth/status`, {
+        method: 'GET',
+        credentials: 'include', // 包含 Cookie
+      });
 
-      // 特定处理401错误
-      if (error instanceof Error) {
-        if (error.message.includes('认证') || error.message.includes('API错误: 401')) {
-          return false;
-        }
+      if (!response.ok) {
+        return false;
       }
 
-      // 其他错误，假设已认证
+      const data = await response.json();
+      return data.authenticated === true;
+    } catch (error) {
+      console.log('认证状态检查失败:', error);
       return false;
     }
   }
@@ -106,6 +134,12 @@ export class NavigationClient {
   async getGroups(): Promise<Group[]> {
     return this.request('groups');
   }
+
+  // 获取所有分组及其站点 (使用 JOIN 优化,避免 N+1 查询)
+  async getGroupsWithSites(): Promise<GroupWithSites[]> {
+    return this.request('groups-with-sites');
+  }
+
 
   async getGroup(id: number): Promise<Group> {
     return this.request(`groups/${id}`);

@@ -23,6 +23,7 @@ interface SiteCardProps {
   onUpdate: (updatedSite: Site) => void;
   onDelete: (siteId: number) => void;
   isEditMode?: boolean;
+  viewMode?: 'readonly' | 'edit'; // 访问模式
   index?: number;
   iconApi?: string; // 添加iconApi属性
 }
@@ -33,6 +34,7 @@ const SiteCard = memo(function SiteCard({
   onUpdate,
   onDelete,
   isEditMode = false,
+  viewMode = 'edit', // 默认为编辑模式
   index = 0,
   iconApi, // 添加iconApi参数
 }: SiteCardProps) {
@@ -300,28 +302,30 @@ const SiteCard = memo(function SiteCard({
                 {site.description || '暂无描述'}
               </Typography>
 
-              {/* 设置按钮 */}
-              <IconButton
-                size='small'
-                sx={{
-                  position: 'absolute',
-                  top: 8,
-                  right: 8,
-                  bgcolor: 'action.hover',
-                  opacity: 0,
-                  transition: 'opacity 0.2s',
-                  '&:hover': {
-                    bgcolor: 'action.selected',
-                  },
-                  '.MuiCardActionArea-root:hover &': {
-                    opacity: 1,
-                  },
-                }}
-                onClick={handleSettingsClick}
-                aria-label='网站设置'
-              >
-                <SettingsIcon fontSize='small' />
-              </IconButton>
+              {/* 设置按钮 - 只在编辑模式显示 */}
+              {viewMode === 'edit' && (
+                <IconButton
+                  size='small'
+                  sx={{
+                    position: 'absolute',
+                    top: 8,
+                    right: 8,
+                    bgcolor: 'action.hover',
+                    opacity: 0,
+                    transition: 'opacity 0.2s',
+                    '&:hover': {
+                      bgcolor: 'action.selected',
+                    },
+                    '.MuiCardActionArea-root:hover &': {
+                      opacity: 1,
+                    },
+                  }}
+                  onClick={handleSettingsClick}
+                  aria-label='网站设置'
+                >
+                  <SettingsIcon fontSize='small' />
+                </IconButton>
+              )}
             </CardContent>
           </CardActionArea>
         )}

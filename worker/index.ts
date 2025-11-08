@@ -7,6 +7,90 @@ import {
 } from "../src/API/http";
 
 /**
+ * 简单的内存速率限制器
+ * 注意: 这是基于单个 Worker 实例的内存限制
+ * 生产环境建议使用 Cloudflare KV 实现跨实例的速率限制
+ */
+class SimpleRateLimiter {
+    private requests: Map<string, { count: number; resetTime: number }> = new Map();
+    private readonly maxRequests: number;
+    private readonly windowMs: number;
+
+    constructor(maxRequests: number = 5, windowMinutes: number = 15) {
+        this.maxRequests = maxRequests;
+        this.windowMs = windowMinutes * 60 * 1000;
+    }
+
+    /**
+     * 检查是否超过速率限制
+     * @param identifier 唯一标识符 (如 IP 地址)
+     * @returns 如果允许请求返回 true,否则返回 false
+     */
+    check(identifier: string): boolean {
+        const now = Date.now();
+        const record = this.requests.get(identifier);
+
+        // 清理过期记录
+        if (record && now > record.resetTime) {
+            this.requests.delete(identifier);
+        }
+
+        // 获取或创建记录
+        const current = this.requests.get(identifier) || {
+            count: 0,
+            resetTime: now + this.windowMs
+        };
+
+        // 检查是否超限
+        if (current.count >= this.maxRequests) {
+            return false;
+        }
+
+        // 增加计数
+        current.count++;
+        this.requests.set(identifier, current);
+        return true;
+    }
+
+    /**
+     * 获取剩余请求次数
+     */
+    getRemaining(identifier: string): number {
+        const record = this.requests.get(identifier);
+        if (!record || Date.now() > record.resetTime) {
+            return this.maxRequests;
+        }
+        return Math.max(0, this.maxRequests - record.count);
+    }
+
+    /**
+     * 定期清理过期记录 (避免内存泄漏)
+     */
+    cleanup(): void {
+        const now = Date.now();
+        for (const [key, record] of this.requests.entries()) {
+            if (now > record.resetTime) {
+                this.requests.delete(key);
+            }
+        }
+    }
+}
+
+// 创建登录端点速率限制器: 5次尝试/15分钟
+const loginRateLimiter = new SimpleRateLimiter(5, 15);
+
+
+/**
+ * 只读路由白名单 - 这些路由在 AUTH_REQUIRED_FOR_READ=false 时无需认证
+ */
+const READ_ONLY_ROUTES = [
+    { method: 'GET', path: '/api/groups' },
+    { method: 'GET', path: '/api/sites' },
+    { method: 'GET', path: '/api/configs' },
+    { method: 'GET', path: '/api/groups-with-sites' },
+] as const;
+
+/**
  * 生成唯一错误 ID
  */
 function generateErrorId(): string {
@@ -17,7 +101,7 @@ function generateErrorId(): string {
  * 结构化日志
  */
 interface LogData {
-    timestamp: string;
+    timestamp?: string;
     level: 'info' | 'warn' | 'error';
     message: string;
     errorId?: string;
@@ -194,7 +278,7 @@ function getCorsHeaders(request: Request): Record<string, string> {
     const requestUrl = new URL(request.url);
 
     // 如果是同源请求，允许
-    let allowedOrigin: string | null = origin;
+    let allowedOrigin: string | null = null;
 
     if (origin) {
         // 检查是否在允许列表中，或者是 workers.dev 子域名
@@ -202,11 +286,15 @@ function getCorsHeaders(request: Request): Record<string, string> {
             origin.endsWith('.workers.dev') ||
             origin === requestUrl.origin; // 同源
 
-        allowedOrigin = isAllowed ? origin : (ALLOWED_ORIGINS[0] || null);
+        allowedOrigin = isAllowed ? origin : null;
     }
 
+    // 如果没有匹配的 origin，使用第一个允许的 origin 或请求源作为默认值
+    // 绝不使用通配符 '*'，以增强安全性
+    const finalOrigin = allowedOrigin || ALLOWED_ORIGINS[0] || requestUrl.origin;
+
     return {
-        'Access-Control-Allow-Origin': allowedOrigin || '*',
+        'Access-Control-Allow-Origin': finalOrigin,
         'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization',
         'Access-Control-Allow-Credentials': 'true',
@@ -275,6 +363,31 @@ export default {
                 // 登录路由 - 不需要验证
                 if (path === "login" && method === "POST") {
                     try {
+                        // 速率限制检查
+                        const clientIP = request.headers.get('CF-Connecting-IP') ||
+                                       request.headers.get('X-Forwarded-For') ||
+                                       'unknown';
+
+                        if (!loginRateLimiter.check(clientIP)) {
+                            const remaining = loginRateLimiter.getRemaining(clientIP);
+                            log({
+                                level: 'warn',
+                                message: '登录速率限制触发',
+                                path: '/api/login',
+                                method: 'POST',
+                                details: { clientIP, remaining }
+                            });
+
+                            return createJsonResponse(
+                                {
+                                    success: false,
+                                    message: '登录尝试次数过多，请稍后再试 (15分钟内最多5次)',
+                                },
+                                request,
+                                { status: 429 } // 429 Too Many Requests
+                            );
+                        }
+
                         const loginData = (await validateRequestBody(request)) as LoginInput;
 
                         // 验证登录数据
@@ -347,6 +460,47 @@ export default {
                     );
                 }
 
+                // 认证状态检查端点 - 检查当前用户是否已认证
+                if (path === "auth/status" && method === "GET") {
+                    // 检查 Cookie 中的 token
+                    const cookieHeader = request.headers.get("Cookie");
+                    let token: string | null = null;
+
+                    if (cookieHeader) {
+                        const cookies = cookieHeader.split(';').reduce((acc, cookie) => {
+                            const [key, value] = cookie.trim().split('=');
+                            if (key && value) {
+                                acc[key] = value;
+                            }
+                            return acc;
+                        }, {} as Record<string, string>);
+
+                        token = cookies['auth_token'] || null;
+                    }
+
+                    // 验证 token
+                    if (token && api.isAuthEnabled()) {
+                        try {
+                            const result = await api.verifyToken(token);
+                            return createJsonResponse(
+                                { authenticated: result.valid },
+                                request
+                            );
+                        } catch {
+                            return createJsonResponse(
+                                { authenticated: false },
+                                request
+                            );
+                        }
+                    }
+
+                    // 没有 token 或认证未启用
+                    return createJsonResponse(
+                        { authenticated: false },
+                        request
+                    );
+                }
+
                 // 初始化数据库接口 - 不需要验证
                 if (path === "init" && method === "GET") {
                     const initResult = await api.initDB();
@@ -356,9 +510,20 @@ export default {
                     return createResponse("数据库初始化成功", request, { status: 200 });
                 }
 
-                // 验证中间件 - 除登录接口、登出接口和初始化接口外，所有请求都需要验证
+                // 验证中间件 - 条件认证
+                let isAuthenticated = false; // 记录认证状态
+
                 if (api.isAuthEnabled()) {
-                    // 优先从 Cookie 中读取 token
+                    const requestPath = `/api/${path}`;
+
+                    // 检查是否为只读路由且免认证已启用
+                    const isReadOnlyRoute = READ_ONLY_ROUTES.some(
+                        (route) => route.method === method && route.path === requestPath
+                    );
+
+                    const shouldRequireAuth = !isReadOnlyRoute || env.AUTH_REQUIRED_FOR_READ === 'true';
+
+                    // 总是检查 token（如果存在）
                     const cookieHeader = request.headers.get("Cookie");
                     let token: string | null = null;
 
@@ -385,8 +550,31 @@ export default {
                         }
                     }
 
-                    // 如果没有 token，返回401错误
-                    if (!token) {
+                    // 如果有 token，验证它
+                    if (token) {
+                        try {
+                            const verifyResult = await api.verifyToken(token);
+                            if (verifyResult.valid) {
+                                isAuthenticated = true; // 认证成功
+                                log({
+                                    timestamp: new Date().toISOString(),
+                                    level: 'info',
+                                    message: `已认证用户访问: ${method} ${requestPath}`,
+                                });
+                            }
+                        } catch (error) {
+                            // Token 验证失败，保持 isAuthenticated = false
+                            log({
+                                timestamp: new Date().toISOString(),
+                                level: 'warn',
+                                message: `Token 验证失败: ${method} ${requestPath}`,
+                                details: error,
+                            });
+                        }
+                    }
+
+                    // 如果需要强制认证但未认证，返回 401
+                    if (shouldRequireAuth && !isAuthenticated) {
                         return createResponse("请先登录", request, {
                             status: 401,
                             headers: {
@@ -395,17 +583,51 @@ export default {
                         });
                     }
 
-                    // 验证Token有效性
-                    const verifyResult = await api.verifyToken(token);
-                    if (!verifyResult.valid) {
-                        return createResponse("认证已过期或无效，请重新登录", request, { status: 401 });
+                    // 记录访客访问（只读路由且未认证）
+                    if (isReadOnlyRoute && !isAuthenticated) {
+                        log({
+                            timestamp: new Date().toISOString(),
+                            level: 'info',
+                            message: `访客模式访问: ${method} ${requestPath}`,
+                        });
                     }
                 }
 
                 // 路由匹配
-                if (path === "groups" && method === "GET") {
-                    const groups = await api.getGroups();
-                    return createJsonResponse(groups, request);
+                // GET /api/groups-with-sites 获取所有分组及其站点 (优化 N+1 查询)
+                if (path === "groups-with-sites" && method === "GET") {
+                    const groupsWithSites = await api.getGroupsWithSites();
+
+                    // 根据认证状态过滤数据
+                    if (!isAuthenticated) {
+                        // 未认证用户只能看到公开分组下的公开站点
+                        const filteredGroups = groupsWithSites
+                            .filter(group => group.is_public === 1)
+                            .map(group => ({
+                                ...group,
+                                sites: group.sites.filter(site => site.is_public === 1)
+                            }));
+                        return createJsonResponse(filteredGroups, request);
+                    }
+
+                    return createJsonResponse(groupsWithSites, request);
+                }
+                // GET /api/groups 获取所有分组
+                else if (path === "groups" && method === "GET") {
+                    // 根据认证状态过滤查询
+                    let query = 'SELECT * FROM groups';
+                    const params: number[] = [];
+
+                    if (!isAuthenticated) {
+                        // 未认证用户只能看到公开分组
+                        query += ' WHERE is_public = ?';
+                        params.push(1);
+                    }
+
+                    query += ' ORDER BY order_num ASC';
+
+                    const result = await env.DB.prepare(query).bind(...params).all();
+                    return createJsonResponse(result.results || [], request);
                 } else if (path.startsWith("groups/") && method === "GET") {
                     const idStr = path.split("/")[1];
                     if (!idStr) {
@@ -489,9 +711,39 @@ export default {
                 }
                 // 站点相关API
                 else if (path === "sites" && method === "GET") {
+                    // 根据认证状态过滤查询
+                    let query = `
+                        SELECT s.*
+                        FROM sites s
+                        INNER JOIN groups g ON s.group_id = g.id
+                    `;
+
                     const groupId = url.searchParams.get("groupId");
-                    const sites = await api.getSites(groupId ? parseInt(groupId) : undefined);
-                    return createJsonResponse(sites, request);
+                    const conditions: string[] = [];
+                    const params: (string | number)[] = [];
+
+                    // 添加 groupId 过滤条件
+                    if (groupId) {
+                        conditions.push(`s.group_id = ?`);
+                        params.push(parseInt(groupId));
+                    }
+
+                    // 未认证用户只能看到公开分组下的公开网站
+                    if (!isAuthenticated) {
+                        conditions.push('g.is_public = ?');
+                        params.push(1);
+                        conditions.push('s.is_public = ?');
+                        params.push(1);
+                    }
+
+                    if (conditions.length > 0) {
+                        query += ' WHERE ' + conditions.join(' AND ');
+                    }
+
+                    query += ' ORDER BY s.group_id ASC, s.order_num ASC';
+
+                    const result = await env.DB.prepare(query).bind(...params).all();
+                    return createJsonResponse(result.results || [], request);
                 } else if (path.startsWith("sites/") && method === "GET") {
                     const idStr = path.split("/")[1];
                     if (!idStr) {
@@ -746,6 +998,7 @@ export default {
 interface Env {
     DB: D1Database;
     AUTH_ENABLED?: string;
+    AUTH_REQUIRED_FOR_READ?: string;
     AUTH_USERNAME?: string;
     AUTH_PASSWORD?: string;
     AUTH_SECRET?: string;

@@ -9,6 +9,8 @@ import {
   Typography,
   Box,
   Alert,
+  FormControlLabel,
+  Switch,
 } from '@mui/material';
 import { Group } from '../API/http';
 
@@ -28,12 +30,14 @@ const EditGroupDialog: React.FC<EditGroupDialogProps> = ({
   onDelete,
 }) => {
   const [name, setName] = useState('');
+  const [isPublic, setIsPublic] = useState(true); // 新增：公开/私密状态
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
-  // 当弹窗打开时，初始化名称
+  // 当弹窗打开时，初始化名称和公开状态
   React.useEffect(() => {
     if (group) {
       setName(group.name);
+      setIsPublic(group.is_public !== 0); // 0 = 私密, 1 或 undefined = 公开
     }
     // 关闭删除确认状态
     setShowDeleteConfirm(false);
@@ -45,6 +49,7 @@ const EditGroupDialog: React.FC<EditGroupDialogProps> = ({
     onSave({
       ...group,
       name: name.trim(),
+      is_public: isPublic ? 1 : 0, // 保存 is_public 字段
     });
   };
 
@@ -56,7 +61,11 @@ const EditGroupDialog: React.FC<EditGroupDialogProps> = ({
       setShowDeleteConfirm(true);
     } else {
       // 确认删除
-      onDelete(group.id!);
+      if (!group.id) {
+        console.error('分组 ID 不存在,无法删除');
+        return;
+      }
+      onDelete(group.id);
     }
   };
 
@@ -74,6 +83,31 @@ const EditGroupDialog: React.FC<EditGroupDialogProps> = ({
             onChange={(e) => setName(e.target.value)}
             variant='outlined'
             autoFocus
+          />
+        </Box>
+
+        {/* 公开/私密开关 */}
+        <Box sx={{ mb: 2 }}>
+          <FormControlLabel
+            control={
+              <Switch
+                checked={isPublic}
+                onChange={(e) => setIsPublic(e.target.checked)}
+                color='primary'
+              />
+            }
+            label={
+              <Box>
+                <Typography variant='body1'>
+                  {isPublic ? '公开分组' : '私密分组'}
+                </Typography>
+                <Typography variant='caption' color='text.secondary'>
+                  {isPublic
+                    ? '所有访客都可以看到此分组'
+                    : '只有管理员登录后才能看到此分组'}
+                </Typography>
+              </Box>
+            }
           />
         </Box>
 
