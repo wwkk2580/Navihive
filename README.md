@@ -28,6 +28,18 @@
 
 > 🚀 一个优雅、现代化的网站导航管理系统，让你的书签收藏井然有序
 
+## 🎯 快速开始
+
+**三步部署，立即使用：**
+
+1. **Fork 项目** → 点击右上角 Fork 按钮
+2. **一键部署** → [![Deploy to Cloudflare Workers](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/你的用户名/Cloudflare-Navihive)
+3. **配置数据库** → 在 Cloudflare 控制台创建 D1 数据库并初始化
+
+> 详细步骤见下方[部署指南](#-部署指南)
+
+---
+
 NaviHive 是基于 Cloudflare Workers 构建的轻量级导航站点，完美替代浏览器书签栏。它提供直观的可视化管理界面，支持分组分类、拖拽排序、暗色模式等实用功能，让你的常用网站触手可及。零成本部署，秒级访问，随时随地管理你的网络世界入口。
 
 ## 📑 目录
@@ -524,6 +536,19 @@ wrangler d1 execute navigation-db --file=backup.sql
 > 如果需要暂时关闭访客访问，无需回滚数据库，只需将 `AUTH_REQUIRED_FOR_READ` 改为 `true` 并重新部署即可。
 
 ## 📝 使用指南
+
+### 🚪 访客模式新功能！
+
+NaviHive v1.1.0 引入了**访客模式**，允许未登录用户查看公开内容：
+
+- 🌍 **公开访问**：无需登录即可浏览公开分组和站点
+- 🔐 **隐私保护**：私密内容仅对管理员可见
+- ⚡ **灵活配置**：通过 `AUTH_REQUIRED_FOR_READ` 开关控制
+- 🎯 **精细权限**：每个分组和站点都可以独立设置公开/私密状态
+
+> 💡 默认启用访客模式，如需完全私有化，将 `AUTH_REQUIRED_FOR_READ` 设为 `true`
+
+---
 
 ### 🚪 登录系统
 
