@@ -1,0 +1,19 @@
+{
+    "$schema": "node_modules/wrangler/config-schema.json",
+    "name": "navihive",
+    "main": "worker/index.ts",
+    "compatibility_date": "2025-04-05",
+    "compatibility_flags": ["nodejs_compat"],
+    "assets": {
+        "not_found_handling": "single-page-application"
+    },
+    "observability": {
+        "enabled": true
+    },
+    "vars": {
+        "AUTH_ENABLED": "true",
+        "AUTH_USERNAME": "linuxdo",
+        "AUTH_PASSWORD": "$2y$10$FJjzibIvtlN.DbVx.VDga.l/No9MMzQH3THq9AUjPnR9eyhcP8k8O",
+        "AUTH_SECRET": "Es59TLyZupy88T4JSpBytIisZEJicTeV"
+    }
+}
